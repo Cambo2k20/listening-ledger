@@ -22,6 +22,12 @@ import {
   discoveryTrackKey,
   normalizeDiscoveryText,
 } from './lib/discovery-ranking.ts'
+import {
+  MAX_SPOTIFY_MUSIC_MS_PLAYED,
+  spotifyHistoryDedupeKey,
+  spotifyHistoryOverlapKey,
+  type NormalizedSpotifyHistoryRecord,
+} from './lib/spotify-history.ts'
 
 const serverDir = dirname(fileURLToPath(import.meta.url))
 const projectRoot = join(serverDir, '..')
@@ -136,7 +142,17 @@ db.exec(`
     imported_at TEXT NOT NULL,
     source_name TEXT NOT NULL,
     source_hash TEXT NOT NULL UNIQUE,
-    event_count INTEGER NOT NULL
+    event_count INTEGER NOT NULL,
+    source_format TEXT NOT NULL DEFAULT 'json',
+    source_file_count INTEGER NOT NULL DEFAULT 1,
+    source_record_count INTEGER NOT NULL DEFAULT 0,
+    valid_record_count INTEGER NOT NULL DEFAULT 0,
+    duplicate_count INTEGER NOT NULL DEFAULT 0,
+    invalid_count INTEGER NOT NULL DEFAULT 0,
+    ignored_count INTEGER NOT NULL DEFAULT 0,
+    qualifying_stream_count INTEGER NOT NULL DEFAULT 0,
+    first_played_at TEXT,
+    last_played_at TEXT
   );
 
   CREATE TABLE IF NOT EXISTS verified_streams (
@@ -149,9 +165,20 @@ db.exec(`
     ms_played INTEGER NOT NULL,
     skipped INTEGER,
     batch_id INTEGER NOT NULL,
+    dedupe_key TEXT,
+    overlap_key TEXT,
     UNIQUE (played_at, track_uri, ms_played),
     FOREIGN KEY (batch_id) REFERENCES import_batches(id)
   );
+
+  CREATE INDEX IF NOT EXISTS idx_verified_streams_batch
+    ON verified_streams(batch_id);
+
+  CREATE INDEX IF NOT EXISTS idx_verified_streams_played_at
+    ON verified_streams(played_at);
+
+  CREATE INDEX IF NOT EXISTS idx_verified_streams_track_uri
+    ON verified_streams(track_uri);
 
   CREATE TABLE IF NOT EXISTS discovery_sessions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -249,6 +276,128 @@ if (!discoveryCandidateColumns.some((column) => column.name === 'seed_labels_jso
     "ALTER TABLE discovery_candidates ADD COLUMN seed_labels_json TEXT NOT NULL DEFAULT '[]'",
   )
 }
+
+const importBatchColumns = new Set(
+  (
+    db.prepare('PRAGMA table_info(import_batches)').all() as Array<{
+      name: string
+    }>
+  ).map((column) => column.name),
+)
+const importBatchMigrations: Array<[string, string]> = [
+  ['source_format', "TEXT NOT NULL DEFAULT 'json'"],
+  ['source_file_count', 'INTEGER NOT NULL DEFAULT 1'],
+  ['source_record_count', 'INTEGER NOT NULL DEFAULT 0'],
+  ['valid_record_count', 'INTEGER NOT NULL DEFAULT 0'],
+  ['duplicate_count', 'INTEGER NOT NULL DEFAULT 0'],
+  ['invalid_count', 'INTEGER NOT NULL DEFAULT 0'],
+  ['ignored_count', 'INTEGER NOT NULL DEFAULT 0'],
+  ['qualifying_stream_count', 'INTEGER NOT NULL DEFAULT 0'],
+  ['first_played_at', 'TEXT'],
+  ['last_played_at', 'TEXT'],
+]
+for (const [name, definition] of importBatchMigrations) {
+  if (!importBatchColumns.has(name)) {
+    db.exec(`ALTER TABLE import_batches ADD COLUMN ${name} ${definition}`)
+  }
+}
+
+const verifiedStreamColumns = new Set(
+  (
+    db.prepare('PRAGMA table_info(verified_streams)').all() as Array<{
+      name: string
+    }>
+  ).map((column) => column.name),
+)
+if (!verifiedStreamColumns.has('dedupe_key')) {
+  db.exec('ALTER TABLE verified_streams ADD COLUMN dedupe_key TEXT')
+}
+if (!verifiedStreamColumns.has('overlap_key')) {
+  db.exec('ALTER TABLE verified_streams ADD COLUMN overlap_key TEXT')
+}
+
+// Recreate after backfilling so a partially migrated database cannot block a
+// canonical key update while another legacy row still holds that key.
+db.exec('DROP INDEX IF EXISTS idx_verified_streams_dedupe_key')
+
+const legacyVerifiedRows = db.prepare(`
+  SELECT id, played_at AS playedAt, track_uri AS trackUri,
+    track_name AS trackName, artist_name AS artistName,
+    ms_played AS msPlayed, dedupe_key AS dedupeKey,
+    overlap_key AS overlapKey, batch_id AS batchId
+  FROM verified_streams
+  ORDER BY id
+`).all() as Array<{
+  id: number
+  playedAt: string
+  trackUri: string | null
+  trackName: string
+  artistName: string
+  msPlayed: number
+  dedupeKey: string | null
+  overlapKey: string | null
+  batchId: number
+}>
+const assignedVerifiedKeys = new Set<string>()
+const migratedDuplicatesByBatch = new Map<number, number>()
+const updateVerifiedIdentity = db.prepare(
+  'UPDATE verified_streams SET dedupe_key = ?, overlap_key = ? WHERE id = ?',
+)
+const deleteDuplicateVerifiedStream = db.prepare(
+  'DELETE FROM verified_streams WHERE id = ?',
+)
+for (const row of legacyVerifiedRows) {
+  const canonicalKey = spotifyHistoryDedupeKey(row)
+  const canonicalOverlapKey = spotifyHistoryOverlapKey(row)
+  if (assignedVerifiedKeys.has(canonicalKey)) {
+    deleteDuplicateVerifiedStream.run(row.id)
+    migratedDuplicatesByBatch.set(
+      row.batchId,
+      (migratedDuplicatesByBatch.get(row.batchId) ?? 0) + 1,
+    )
+    continue
+  }
+  assignedVerifiedKeys.add(canonicalKey)
+  if (row.dedupeKey !== canonicalKey || row.overlapKey !== canonicalOverlapKey) {
+    updateVerifiedIdentity.run(canonicalKey, canonicalOverlapKey, row.id)
+  }
+}
+
+const addMigratedDuplicateCount = db.prepare(`
+  UPDATE import_batches
+  SET duplicate_count = duplicate_count + ?
+  WHERE id = ?
+`)
+for (const [batchId, duplicateCount] of migratedDuplicatesByBatch) {
+  addMigratedDuplicateCount.run(duplicateCount, batchId)
+}
+db.exec(`
+  UPDATE import_batches
+  SET event_count = (
+      SELECT COUNT(*) FROM verified_streams vs WHERE vs.batch_id = import_batches.id
+    ),
+    qualifying_stream_count = (
+      SELECT COUNT(*) FROM verified_streams vs
+      WHERE vs.batch_id = import_batches.id AND vs.ms_played >= 30000
+    ),
+    first_played_at = (
+      SELECT MIN(played_at) FROM verified_streams vs
+      WHERE vs.batch_id = import_batches.id
+    ),
+    last_played_at = (
+      SELECT MAX(played_at) FROM verified_streams vs
+      WHERE vs.batch_id = import_batches.id
+    );
+`)
+
+db.exec(`
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_verified_streams_dedupe_key
+    ON verified_streams(dedupe_key)
+    WHERE dedupe_key IS NOT NULL;
+
+  CREATE INDEX IF NOT EXISTS idx_verified_streams_overlap_key
+    ON verified_streams(overlap_key);
+`)
 
 const upsertAlbum = db.prepare(`
   INSERT INTO albums (id, uri, name, image_url, spotify_url)
@@ -888,6 +1037,285 @@ export function getEntityDetail(
   }
 }
 
+export type HistoryImportFormat = 'zip' | 'json'
+
+export interface HistoryImportBatchSummary {
+  id: number
+  sourceName: string
+  format: HistoryImportFormat
+  importedAt: string
+  eventCount: number
+  streamCount: number
+  totalMsPlayed: number
+  firstPlayedAt: string | null
+  lastPlayedAt: string | null
+  sourceRecordCount: number
+  validRecordCount: number
+  duplicateCount: number
+  invalidCount: number
+  ignoredCount: number
+}
+
+export interface CommitHistoryImportInput {
+  sourceName: string
+  sourceHash: string
+  format: HistoryImportFormat
+  fileCount: number
+  totalRecords: number
+  validRecords: number
+  duplicateWithinUploadRecords: number
+  invalidRecords: number
+  ignoredRecords: number
+  expectedImportableRecords: number
+  records: NormalizedSpotifyHistoryRecord[]
+}
+
+export interface VerifiedHistoryIdentityIndex {
+  dedupeKeys: Set<string>
+  uriOverlapCounts: Map<string, number>
+  metadataOverlapCounts: Map<string, number>
+}
+
+export function getVerifiedHistoryIdentityIndex(): VerifiedHistoryIdentityIndex {
+  const rows = db.prepare(`
+    SELECT dedupe_key AS dedupeKey, overlap_key AS overlapKey,
+      track_uri AS trackUri
+    FROM verified_streams
+    WHERE dedupe_key IS NOT NULL AND overlap_key IS NOT NULL
+  `).all() as Array<{
+    dedupeKey: string
+    overlapKey: string
+    trackUri: string | null
+  }>
+  const result: VerifiedHistoryIdentityIndex = {
+    dedupeKeys: new Set<string>(),
+    uriOverlapCounts: new Map<string, number>(),
+    metadataOverlapCounts: new Map<string, number>(),
+  }
+  for (const row of rows) {
+    result.dedupeKeys.add(row.dedupeKey)
+    const overlapCounts = row.trackUri
+      ? result.uriOverlapCounts
+      : result.metadataOverlapCounts
+    overlapCounts.set(row.overlapKey, (overlapCounts.get(row.overlapKey) ?? 0) + 1)
+  }
+  return result
+}
+
+export function filterImportableHistoryRecords(
+  records: NormalizedSpotifyHistoryRecord[],
+  index: VerifiedHistoryIdentityIndex,
+): NormalizedSpotifyHistoryRecord[] {
+  const remainingUriOverlaps = new Map(index.uriOverlapCounts)
+  const remainingMetadataOverlaps = new Map(index.metadataOverlapCounts)
+  return records.filter((record) => {
+    if (index.dedupeKeys.has(record.dedupeKey)) {
+      consumeHistoryOverlap(
+        record.trackUri ? remainingUriOverlaps : remainingMetadataOverlaps,
+        record.overlapKey,
+      )
+      return false
+    }
+    const oppositeCounts = record.trackUri
+      ? remainingMetadataOverlaps
+      : remainingUriOverlaps
+    return !consumeHistoryOverlap(oppositeCounts, record.overlapKey)
+  })
+}
+
+function consumeHistoryOverlap(
+  counts: Map<string, number>,
+  overlapKey: string,
+): boolean {
+  const count = counts.get(overlapKey) ?? 0
+  if (count === 0) return false
+  if (count === 1) counts.delete(overlapKey)
+  else counts.set(overlapKey, count - 1)
+  return true
+}
+
+export function hasHistoryImportSource(sourceHash: string): boolean {
+  return Boolean(
+    db
+      .prepare('SELECT 1 FROM import_batches WHERE source_hash = ? LIMIT 1')
+      .get(sourceHash),
+  )
+}
+
+export function getHistoryImportBatches(): HistoryImportBatchSummary[] {
+  const rows = db.prepare(`
+    SELECT ib.id, ib.source_name AS sourceName,
+      ib.source_format AS format, ib.imported_at AS importedAt,
+      ib.event_count AS eventCount,
+      COALESCE(SUM(CASE WHEN vs.ms_played >= 30000 THEN 1 ELSE 0 END), 0)
+        AS streamCount,
+      TOTAL(vs.ms_played) AS totalMsPlayed,
+      MIN(vs.played_at) AS firstPlayedAt,
+      MAX(vs.played_at) AS lastPlayedAt,
+      ib.source_record_count AS sourceRecordCount,
+      ib.valid_record_count AS validRecordCount,
+      ib.duplicate_count AS duplicateCount,
+      ib.invalid_count AS invalidCount,
+      ib.ignored_count AS ignoredCount
+    FROM import_batches ib
+    LEFT JOIN verified_streams vs ON vs.batch_id = ib.id
+    GROUP BY ib.id
+    ORDER BY ib.imported_at DESC, ib.id DESC
+  `).all() as Array<Record<string, unknown>>
+
+  return rows.map((row) => ({
+    id: Number(row.id),
+    sourceName: String(row.sourceName),
+    format: row.format === 'zip' ? 'zip' : 'json',
+    importedAt: String(row.importedAt),
+    eventCount: Number(row.eventCount),
+    streamCount: Number(row.streamCount),
+    totalMsPlayed: Number(row.totalMsPlayed),
+    firstPlayedAt: row.firstPlayedAt ? String(row.firstPlayedAt) : null,
+    lastPlayedAt: row.lastPlayedAt ? String(row.lastPlayedAt) : null,
+    sourceRecordCount: Number(row.sourceRecordCount),
+    validRecordCount: Number(row.validRecordCount),
+    duplicateCount: Number(row.duplicateCount),
+    invalidCount: Number(row.invalidCount),
+    ignoredCount: Number(row.ignoredCount),
+  }))
+}
+
+export function commitHistoryImport(
+  input: CommitHistoryImportInput,
+): HistoryImportBatchSummary {
+  if (!input.records.length) {
+    throw new Error('This archive has no valid music playback records to import.')
+  }
+  if (
+    input.records.some(
+      (record) =>
+        !Number.isSafeInteger(record.msPlayed) ||
+        record.msPlayed < 0 ||
+        record.msPlayed > MAX_SPOTIFY_MUSIC_MS_PLAYED,
+    )
+  ) {
+    throw new Error('This archive contains an invalid playback duration.')
+  }
+
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    if (hasHistoryImportSource(input.sourceHash)) {
+      throw new Error('This exact Spotify history source has already been imported.')
+    }
+
+    const identities = getVerifiedHistoryIdentityIndex()
+    const importableRecords = filterImportableHistoryRecords(
+      input.records,
+      identities,
+    )
+    if (importableRecords.length !== input.expectedImportableRecords) {
+      throw new Error(
+        'The ledger changed after preview. Preview the archive again before importing.',
+      )
+    }
+    if (!importableRecords.length) {
+      throw new Error('Every valid playback in this source is already imported.')
+    }
+
+    const importedAt = new Date().toISOString()
+    const playedTimes = importableRecords.map((record) => record.playedAt).sort()
+    const qualifyingStreams = importableRecords.filter(
+      (record) => record.msPlayed >= 30_000,
+    ).length
+    const duplicateExistingRecords = input.records.length - importableRecords.length
+    const duplicateCount =
+      input.duplicateWithinUploadRecords + duplicateExistingRecords
+    const totalMsPlayed = importableRecords.reduce(
+      (total, record) => total + record.msPlayed,
+      0,
+    )
+    const batchResult = db.prepare(`
+      INSERT INTO import_batches (
+        imported_at, source_name, source_hash, event_count, source_format,
+        source_file_count, source_record_count, valid_record_count,
+        duplicate_count, invalid_count, ignored_count,
+        qualifying_stream_count, first_played_at, last_played_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      importedAt,
+      input.sourceName,
+      input.sourceHash,
+      importableRecords.length,
+      input.format,
+      input.fileCount,
+      input.totalRecords,
+      input.validRecords,
+      duplicateCount,
+      input.invalidRecords,
+      input.ignoredRecords,
+      qualifyingStreams,
+      playedTimes[0] ?? null,
+      playedTimes.at(-1) ?? null,
+    )
+    const batchId = Number(batchResult.lastInsertRowid)
+    const insertVerified = db.prepare(`
+      INSERT INTO verified_streams (
+        played_at, track_uri, track_name, artist_name, album_name,
+        ms_played, skipped, batch_id, dedupe_key, overlap_key
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+    for (const record of importableRecords) {
+      insertVerified.run(
+        record.playedAt,
+        record.trackUri,
+        record.trackName,
+        record.artistName,
+        record.albumName,
+        record.msPlayed,
+        record.skipped === null ? null : Number(record.skipped),
+        batchId,
+        record.dedupeKey,
+        record.overlapKey,
+      )
+    }
+    const summary: HistoryImportBatchSummary = {
+      id: batchId,
+      sourceName: input.sourceName,
+      format: input.format,
+      importedAt,
+      eventCount: importableRecords.length,
+      streamCount: qualifyingStreams,
+      totalMsPlayed,
+      firstPlayedAt: playedTimes[0] ?? null,
+      lastPlayedAt: playedTimes.at(-1) ?? null,
+      sourceRecordCount: input.totalRecords,
+      validRecordCount: input.validRecords,
+      duplicateCount,
+      invalidCount: input.invalidRecords,
+      ignoredCount: input.ignoredRecords,
+    }
+    db.exec('COMMIT')
+    return summary
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
+}
+
+export function undoHistoryImport(
+  batchId: number,
+): HistoryImportBatchSummary | null {
+  const existing = getHistoryImportBatches().find((batch) => batch.id === batchId)
+  if (!existing) return null
+
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    db.prepare('DELETE FROM verified_streams WHERE batch_id = ?').run(batchId)
+    db.prepare('DELETE FROM import_batches WHERE id = ?').run(batchId)
+    db.exec('COMMIT')
+    return existing
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
+}
+
 const rediscoveryGapDays = 90
 
 function dayDistance(left: string, right: string): number {
@@ -1082,6 +1510,16 @@ export function getRecordsAndMilestones(now = new Date()): Record<string, unknow
   )
   const bestDay = bestDays.at(-1)
   const streaks = getActiveDayStreaks(daily, now)
+  const combinedDays = db.prepare(`
+    SELECT day, 1 AS events FROM (
+      SELECT date(played_at) AS day FROM play_events
+      UNION
+      SELECT date(played_at) AS day FROM verified_streams
+      WHERE ms_played >= 30000
+    )
+    ORDER BY day
+  `).all() as Array<{ day: string; events: number }>
+  const combinedStreaks = getActiveDayStreaks(combinedDays, now)
   const thresholds = eventMilestoneThresholds(totalEvents)
   const achieved = thresholds
     .filter((value) => value <= totalEvents)
@@ -1122,14 +1560,15 @@ export function getRecordsAndMilestones(now = new Date()): Record<string, unknow
     }).count,
   )
   let verifiedListening: Record<string, unknown> | null = null
-  if (importBatchCount > 0) {
-    const totals = db.prepare(`
-      SELECT COALESCE(SUM(ms_played), 0) AS totalMsPlayed,
-        SUM(CASE WHEN ms_played >= 30000 THEN 1 ELSE 0 END) AS streamCount
-      FROM verified_streams
-    `).get() as { totalMsPlayed: number; streamCount: number }
+  const verifiedTotals = db.prepare(`
+    SELECT TOTAL(ms_played) AS totalMsPlayed,
+      COALESCE(SUM(CASE WHEN ms_played >= 30000 THEN 1 ELSE 0 END), 0)
+        AS streamCount
+    FROM verified_streams
+  `).get() as { totalMsPlayed: number; streamCount: number }
+  if (Number(verifiedTotals.streamCount) > 0) {
     const highestDay = db.prepare(`
-      SELECT date(played_at) AS day, SUM(ms_played) AS msPlayed
+      SELECT date(played_at) AS day, TOTAL(ms_played) AS msPlayed
       FROM verified_streams
       GROUP BY date(played_at)
       ORDER BY msPlayed DESC, day DESC
@@ -1137,8 +1576,8 @@ export function getRecordsAndMilestones(now = new Date()): Record<string, unknow
     `).get() as { day: string; msPlayed: number } | undefined
     verifiedListening = {
       importBatchCount,
-      totalMsPlayed: Number(totals.totalMsPlayed),
-      streamCount: Number(totals.streamCount),
+      totalMsPlayed: Number(verifiedTotals.totalMsPlayed),
+      streamCount: Number(verifiedTotals.streamCount),
       highestDay: highestDay ?? null,
     }
   }
@@ -1160,6 +1599,19 @@ export function getRecordsAndMilestones(now = new Date()): Record<string, unknow
         : null,
     },
     streaks,
+    combinedCoverage: {
+      includesImportedHistory: Boolean(
+        db
+          .prepare(
+            'SELECT 1 FROM verified_streams WHERE ms_played >= 30000 LIMIT 1',
+          )
+          .get(),
+      ),
+      activeDays: combinedDays.length,
+      firstDay: combinedDays[0]?.day ?? null,
+      latestDay: combinedDays.at(-1)?.day ?? null,
+      streaks: combinedStreaks,
+    },
     milestones: {
       achieved,
       next: nextValue
@@ -1182,6 +1634,7 @@ export function getRecordsAndMilestones(now = new Date()): Record<string, unknow
 
 export function getDashboard(period = '30d'): Record<string, unknown> {
   const filter = periodClause(period)
+  const verifiedFilter = periodClause(period, 'vs')
   const total = db
     .prepare(`SELECT COUNT(*) AS count FROM play_events pe ${filter.sql}`)
     .get(...filter.params) as { count: number }
@@ -1191,9 +1644,60 @@ export function getDashboard(period = '30d'): Record<string, unknown> {
   const activeDays = db
     .prepare(`SELECT COUNT(DISTINCT date(pe.played_at)) AS count FROM play_events pe ${filter.sql}`)
     .get(...filter.params) as { count: number }
-  const coverage = db.prepare(`
-    SELECT MIN(played_at) AS first, MAX(played_at) AS latest FROM play_events
-  `).get() as { first: string | null; latest: string | null }
+  const verifiedMetrics = db.prepare(`
+    SELECT COUNT(*) AS playbackRecords,
+      COALESCE(SUM(CASE WHEN vs.ms_played >= 30000 THEN 1 ELSE 0 END), 0)
+        AS streams,
+      TOTAL(vs.ms_played) AS totalMsPlayed,
+      COUNT(DISTINCT date(vs.played_at)) AS activeDays
+    FROM verified_streams vs
+    ${verifiedFilter.sql}
+  `).get(...verifiedFilter.params) as {
+    playbackRecords: number
+    streams: number
+    totalMsPlayed: number
+    activeDays: number
+  }
+  const combinedActiveDays = db.prepare(`
+    SELECT COUNT(*) AS count FROM (
+      SELECT date(pe.played_at) AS day
+      FROM play_events pe
+      ${filter.sql}
+      UNION
+      SELECT date(vs.played_at) AS day
+      FROM verified_streams vs
+      ${verifiedFilter.sql || 'WHERE 1 = 1'}
+        AND vs.ms_played >= 30000
+    )
+  `).get(...filter.params, ...verifiedFilter.params) as { count: number }
+  const observedCoverage = db.prepare(`
+    SELECT MIN(played_at) AS first, MAX(played_at) AS latest,
+      COUNT(DISTINCT date(played_at)) AS activeDays
+    FROM play_events
+  `).get() as { first: string | null; latest: string | null; activeDays: number }
+  const verifiedCoverage = db.prepare(`
+    SELECT MIN(played_at) AS first, MAX(played_at) AS latest,
+      COUNT(DISTINCT date(played_at)) AS activeDays
+    FROM verified_streams
+    WHERE ms_played >= 30000
+  `).get() as { first: string | null; latest: string | null; activeDays: number }
+  const combinedCoverage = db.prepare(`
+    SELECT MIN(playedAt) AS first, MAX(playedAt) AS latest,
+      COUNT(DISTINCT date(playedAt)) AS activeDays
+    FROM (
+      SELECT played_at AS playedAt FROM play_events
+      UNION ALL
+      SELECT played_at AS playedAt FROM verified_streams
+      WHERE ms_played >= 30000
+    )
+  `).get() as { first: string | null; latest: string | null; activeDays: number }
+  const verifiedUnlocked = Boolean(
+    db
+      .prepare(
+        'SELECT 1 FROM verified_streams WHERE ms_played >= 30000 LIMIT 1',
+      )
+      .get(),
+  )
 
   const topTracks = db.prepare(`
     SELECT t.id, t.name, t.uri AS spotifyUri, t.spotify_url AS spotifyUrl,
@@ -1239,11 +1743,31 @@ export function getDashboard(period = '30d'): Record<string, unknown> {
       events: total.count,
       uniqueTracks: uniqueTracks.count,
       activeDays: activeDays.count,
-      verifiedStreams: Number(
-        (db.prepare('SELECT COUNT(*) AS count FROM verified_streams WHERE ms_played >= 30000').get() as { count: number }).count,
-      ),
+      verifiedStreams: Number(verifiedMetrics.streams),
+      verifiedTimeMs: verifiedUnlocked
+        ? Number(verifiedMetrics.totalMsPlayed)
+        : null,
+      combinedActiveDays: Number(combinedActiveDays.count),
     },
-    coverage,
+    coverage: {
+      first: observedCoverage.first,
+      latest: observedCoverage.latest,
+      observed: {
+        first: observedCoverage.first,
+        latest: observedCoverage.latest,
+        activeDays: Number(observedCoverage.activeDays),
+      },
+      verified: {
+        first: verifiedCoverage.first,
+        latest: verifiedCoverage.latest,
+        activeDays: Number(verifiedCoverage.activeDays),
+      },
+      combined: {
+        first: combinedCoverage.first,
+        latest: combinedCoverage.latest,
+        activeDays: Number(combinedCoverage.activeDays),
+      },
+    },
     topTracks,
     topArtists,
     daily,
@@ -1565,7 +2089,14 @@ export function getArtistDiveOptions(
   const coverageActiveDays = Number(
     (
       db
-        .prepare('SELECT COUNT(DISTINCT date(played_at)) AS count FROM play_events')
+        .prepare(`
+          SELECT COUNT(*) AS count FROM (
+            SELECT date(played_at) AS day FROM play_events
+            UNION
+            SELECT date(played_at) AS day FROM verified_streams
+            WHERE ms_played >= 30000
+          )
+        `)
         .get() as { count: number }
     ).count,
   )

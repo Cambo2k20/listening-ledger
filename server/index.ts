@@ -10,12 +10,23 @@ import {
   getExportData,
   getHealth,
   getHistory,
+  getHistoryImportBatches,
   getRankings,
   getRecordsAndMilestones,
   getStoredToken,
   getTrends,
+  undoHistoryImport,
   type DetailEntityType,
 } from './db.ts'
+import {
+  cleanupHistoryUpload,
+  HistoryImportError,
+  importHistoryUpload,
+  parseHistoryUpload,
+  previewHistoryImport,
+  receiveHistoryUpload,
+  type ReceivedHistoryUpload,
+} from './history-import.ts'
 import {
   generateArtistDiveSession,
   generateDiscoverySession,
@@ -126,6 +137,78 @@ app.get('/api/trends', (_request, response) => {
 
 app.get('/api/records', (_request, response) => {
   response.json(getRecordsAndMilestones())
+})
+
+app.get('/api/history-imports', (_request, response) => {
+  response.json({ items: getHistoryImportBatches() })
+})
+
+app.post('/api/history-imports/preview', async (request, response) => {
+  let upload: ReceivedHistoryUpload | null = null
+  try {
+    upload = await receiveHistoryUpload(request)
+    const parsed = await parseHistoryUpload(upload)
+    response.json(previewHistoryImport(parsed))
+  } catch (error) {
+    const status = error instanceof HistoryImportError ? error.status : 500
+    response.status(status).json({
+      error:
+        error instanceof Error
+          ? error.message
+          : 'Spotify history preview failed.',
+    })
+  } finally {
+    if (upload) await cleanupHistoryUpload(upload).catch(() => undefined)
+  }
+})
+
+app.post('/api/history-imports', async (request, response) => {
+  let upload: ReceivedHistoryUpload | null = null
+  try {
+    upload = await receiveHistoryUpload(request)
+    const parsed = await parseHistoryUpload(upload)
+    const expectedSourceHash = String(
+      request.headers['x-history-source-hash'] ?? '',
+    )
+    const expectedImportableRecords = Number(
+      request.headers['x-history-expected-count'] ?? Number.NaN,
+    )
+    response.status(201).json({
+      batch: importHistoryUpload(
+        parsed,
+        expectedSourceHash,
+        expectedImportableRecords,
+      ),
+    })
+  } catch (error) {
+    const status = error instanceof HistoryImportError ? error.status : 500
+    response.status(status).json({
+      error:
+        error instanceof Error ? error.message : 'Spotify history import failed.',
+    })
+  } finally {
+    if (upload) await cleanupHistoryUpload(upload).catch(() => undefined)
+  }
+})
+
+app.delete('/api/history-imports/:id', (request, response) => {
+  const batchId = Number(request.params.id)
+  if (!Number.isInteger(batchId) || batchId < 1) {
+    response.status(400).json({ error: 'Invalid history import batch id.' })
+    return
+  }
+  try {
+    const batch = undoHistoryImport(batchId)
+    if (!batch) {
+      response.status(404).json({ error: 'History import batch not found.' })
+      return
+    }
+    response.json({ batch })
+  } catch (error) {
+    response.status(500).json({
+      error: error instanceof Error ? error.message : 'History import undo failed.',
+    })
+  }
 })
 
 app.get('/api/health', (_request, response) => {

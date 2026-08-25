@@ -18,6 +18,28 @@ export async function api<T>(
       ...options?.headers,
     },
   })
+  return readApiResponse<T>(response)
+}
+
+export async function apiFile<T>(
+  path: string,
+  file: File,
+  options?: Omit<RequestInit, 'body'>,
+): Promise<T> {
+  const response = await fetch(path, {
+    ...options,
+    method: options?.method ?? 'POST',
+    body: file,
+    headers: {
+      'Content-Type': 'application/octet-stream',
+      'X-History-File-Name': encodeURIComponent(file.name),
+      ...options?.headers,
+    },
+  })
+  return readApiResponse<T>(response)
+}
+
+async function readApiResponse<T>(response: Response): Promise<T> {
   const payload = (await response.json().catch(() => null)) as
     | T
     | { error?: string }
@@ -31,4 +53,3 @@ export async function api<T>(
   }
   return payload as T
 }
-

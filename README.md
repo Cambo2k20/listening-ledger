@@ -5,7 +5,7 @@
 A private, local-first Spotify listening dashboard. Listening Ledger records the
 recent playback events Spotify exposes, keeps them in a local SQLite database,
 and clearly separates those observations from verified 30-second streams that
-can be imported from Spotify's Extended Streaming History later.
+you import from Spotify's downloadable listening history.
 
 > Playback timestamps are evidence that Spotify returned an event. They are not
 > proof that 30 seconds of the track were played. Listening Ledger keeps that
@@ -24,6 +24,8 @@ can be imported from Spotify's Extended Streaming History later.
 - Persistent Spotify Connect controller with device transfer, transport,
   position, and volume controls
 - JSON and CSV export
+- Preview-first Spotify ZIP/JSON history import with overlap deduplication,
+  reversible batches, and strict sensitive-field discard
 - Honest observed-versus-verified status throughout the UI
 
 ## Technology
@@ -111,6 +113,29 @@ Open `http://127.0.0.1:5173`.
 Your Spotify token and listening database are written beneath the local
 checkout. They are ignored by Git and should never be committed.
 
+## Import Spotify history
+
+Open **Settings → Import Spotify history** and choose Spotify's ZIP export or
+one extracted listening-history JSON file. Listening Ledger previews the date
+range, valid records, duplicates, invalid rows, verified streams, and verified
+time before writing anything. Each completed import is stored as a batch that
+can be undone from the same panel.
+
+Imported playback records stay in `verified_streams`; Recently Played API
+observations stay in `play_events`. Their event totals are never added together.
+The UI and API use these meanings consistently:
+
+- **Observed events** are deduplicated rows captured through Recently Played.
+- **Verified streams** are imported music plays lasting at least 30 seconds.
+- **Verified time** sums imported `msPlayed` values and stays locked until at
+  least one qualifying verified stream exists.
+- **Combined coverage** unions observed dates with qualifying imported dates
+  only for coverage, streaks, and discovery eligibility—not play totals.
+
+The importer retains only the playback timestamp, track identity and names,
+album name, `msPlayed`, and skip flag. IP address, country, platform, device,
+user-agent, and other unrelated export fields are discarded during parsing.
+
 ## Background collection
 
 The synchronization paths are deliberately separate:
@@ -168,12 +193,9 @@ running reduces that risk.
 
 ## Roadmap
 
-- Import Spotify Extended Streaming History
-- Verified stream counts and exact listening time
-- Track and artist detail pages
-- Calendar, sessions, records, and streaks
 - Ranking movement from daily Top Items snapshots
-- Discovery-session history and richer feedback analytics
+- Discovery session history and deterministic taste-learning explanations
+- Encrypted full-database backup and restore
 
 ## License
 

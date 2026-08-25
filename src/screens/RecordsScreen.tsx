@@ -59,6 +59,7 @@ function formatDuration(milliseconds: number): string {
   const totalMinutes = Math.floor(milliseconds / 60_000)
   const hours = Math.floor(totalMinutes / 60)
   const minutes = totalMinutes % 60
+  if (milliseconds > 0 && totalMinutes === 0) return '<1 min'
   if (hours === 0) return `${minutes} min`
   return `${formatNumber(hours)}h ${minutes}m`
 }
@@ -117,6 +118,18 @@ export default function RecordsScreen() {
       ? 'Started today'
       : `Since ${formatLedgerDay(current.startDay)}`
   })()
+  const combinedCurrentStreakDetail = (() => {
+    const current = data?.combinedCoverage.streaks.current
+    if (!current || current.state === 'ended') {
+      return data?.combinedCoverage.latestDay
+        ? `Latest covered date ${formatLedgerDay(data.combinedCoverage.latestDay)}`
+        : 'No covered dates yet'
+    }
+    if (current.state === 'grace') return 'Continues if either source covers today'
+    return current.days === 1
+      ? 'Covered today'
+      : `Since ${formatLedgerDay(current.startDay)}`
+  })()
 
   return (
     <>
@@ -140,7 +153,10 @@ export default function RecordsScreen() {
             actionTo="/health"
           />
         </Panel>
-      ) : !loading && data?.summary.totalEvents === 0 ? (
+      ) : !loading &&
+        data?.summary.totalEvents === 0 &&
+        !data.verifiedListening &&
+        !data.combinedCoverage.includesImportedHistory ? (
         <Panel title="No records yet" kicker="Observed-event ledger">
           <EmptyState
             title="Your first milestone is waiting"
@@ -195,6 +211,53 @@ export default function RecordsScreen() {
               icon={Radio}
             />
           </div>
+
+          {data?.combinedCoverage.includesImportedHistory && (
+            <Panel
+              title="Combined coverage streaks"
+              kicker="Observed dates + qualifying imported dates · coverage only"
+              className="records-combined-panel"
+            >
+              <div className="metric-grid metric-grid--three">
+                <MetricCard
+                  label="Covered dates"
+                  value={formatNumber(data.combinedCoverage.activeDays)}
+                  detail={formatDayRange(
+                    data.combinedCoverage.firstDay,
+                    data.combinedCoverage.latestDay,
+                  )}
+                  icon={CalendarDays}
+                  tone="amber"
+                />
+                <MetricCard
+                  label="Current coverage streak"
+                  value={pluralDays(
+                    data.combinedCoverage.streaks.current.days,
+                  )}
+                  detail={combinedCurrentStreakDetail}
+                  icon={Flame}
+                  tone="lime"
+                />
+                <MetricCard
+                  label="Longest coverage streak"
+                  value={pluralDays(
+                    data.combinedCoverage.streaks.longest.days,
+                  )}
+                  detail={formatDayRange(
+                    data.combinedCoverage.streaks.longest.startDay,
+                    data.combinedCoverage.streaks.longest.endDay,
+                  )}
+                  icon={Trophy}
+                  tone="violet"
+                />
+              </div>
+              <p className="records-combined-note">
+                This union uses imported plays of at least 30 seconds and is used only
+                for date coverage and streak eligibility. Observed event totals and
+                imported verified metrics remain separate.
+              </p>
+            </Panel>
+          )}
 
           <div className="records-grid">
             <Panel
@@ -390,7 +453,7 @@ export default function RecordsScreen() {
           {data?.verifiedListening && (
             <Panel
               title="Verified listening records"
-              kicker="Imported Extended Streaming History only"
+              kicker="Imported Spotify history only"
               className="records-verified-panel"
             >
               <div className="metric-grid metric-grid--three">

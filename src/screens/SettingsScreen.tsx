@@ -9,6 +9,7 @@ import {
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
+import { HistoryImportPanel } from '../components/HistoryImportPanel'
 import { PageIntro, Panel } from '../components/Ui'
 import { useAppContext } from '../context'
 import { api } from '../lib/api'
@@ -205,16 +206,7 @@ export default function SettingsScreen() {
           </div>
         </Panel>
 
-        <Panel title="Extended history" kicker="Planned import">
-          <p className="panel-copy">
-            The database already separates imported verified streams from observed
-            API events. File import will be enabled when your Spotify archive is
-            available.
-          </p>
-          <button className="button button--quiet" disabled>
-            Import Spotify archive
-          </button>
-        </Panel>
+        <HistoryImportPanel onImported={refreshStatus} />
       </div>
     </>
   )

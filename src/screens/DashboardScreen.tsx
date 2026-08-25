@@ -1,8 +1,8 @@
 import {
   Activity,
   CalendarDays,
+  Clock3,
   Disc3,
-  Music2,
   Radio,
   ShieldCheck,
 } from 'lucide-react'
@@ -10,8 +10,12 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAppContext } from '../context'
 import { api } from '../lib/api'
-import { formatDate, formatNumber } from '../lib/format'
-import type { DashboardData } from '../types'
+import {
+  formatDuration,
+  formatNumber,
+  formatUtcDate,
+} from '../lib/format'
+import type { DashboardData, SourceCoverage } from '../types'
 import {
   EmptyState,
   MetricCard,
@@ -29,17 +33,39 @@ const periods = [
   { value: 'all', label: 'All recorded' },
 ]
 
+function coverageRange(coverage?: SourceCoverage): string {
+  if (!coverage?.first || !coverage.latest) return 'No coverage yet'
+  return `${formatUtcDate(coverage.first)} – ${formatUtcDate(coverage.latest)}`
+}
+
 export default function DashboardScreen() {
   const { status, syncMessage } = useAppContext()
   const [period, setPeriod] = useState('30d')
   const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
+    let active = true
     setLoading(true)
+    setData(null)
+    setError(null)
     api<DashboardData>(`/api/dashboard?period=${period}`)
-      .then(setData)
-      .finally(() => setLoading(false))
+      .then((result) => {
+        if (active) setData(result)
+      })
+      .catch((reason: unknown) => {
+        if (!active) return
+        setError(
+          reason instanceof Error ? reason.message : 'Dashboard data could not be loaded.',
+        )
+      })
+      .finally(() => {
+        if (active) setLoading(false)
+      })
+    return () => {
+      active = false
+    }
   }, [period, syncMessage])
 
   const maxDaily = useMemo(
@@ -83,37 +109,106 @@ export default function DashboardScreen() {
         </div>
       )}
 
-      <div className="metric-grid">
+      {error ? (
+        <Panel title="Dashboard unavailable" kicker="Local ledger">
+          <EmptyState
+            title="The dashboard endpoint did not respond"
+            detail={error}
+            actionLabel="Check data health"
+            actionTo="/health"
+          />
+        </Panel>
+      ) : (
+        <>
+          <div className="metric-grid">
         <MetricCard
-          label="Recorded events"
-          value={formatNumber(data?.metrics.events ?? 0)}
-          detail="Observed playback events"
+          label="Observed events"
+          value={loading ? '—' : formatNumber(data?.metrics.events ?? 0)}
+          detail="Recently Played · selected period"
           icon={Radio}
           tone="lime"
         />
         <MetricCard
-          label="Unique tracks"
-          value={formatNumber(data?.metrics.uniqueTracks ?? 0)}
-          detail="Within this period"
-          icon={Music2}
+          label="Verified streams"
+          value={loading ? '—' : formatNumber(data?.metrics.verifiedStreams ?? 0)}
+          detail="Imported plays lasting at least 30 seconds"
+          icon={ShieldCheck}
           tone="violet"
         />
         <MetricCard
-          label="Active days"
-          value={formatNumber(data?.metrics.activeDays ?? 0)}
-          detail="Days with recorded activity"
-          icon={CalendarDays}
+          label="Verified time"
+          value={
+            loading
+              ? '—'
+              : data?.metrics.verifiedTimeMs === null
+                ? 'Locked'
+                : formatDuration(data?.metrics.verifiedTimeMs ?? 0)
+          }
+          detail={
+            loading
+              ? 'Loading selected period'
+              : data?.metrics.verifiedTimeMs === null
+                ? 'Unlocks after a qualifying history import'
+                : 'Sum of imported msPlayed values'
+          }
+          icon={Clock3}
           tone="amber"
         />
         <MetricCard
-          label="Verified streams"
-          value={formatNumber(data?.metrics.verifiedStreams ?? 0)}
-          detail="Requires history import"
-          icon={ShieldCheck}
+          label="Combined coverage"
+          value={loading ? '—' : formatNumber(data?.metrics.combinedActiveDays ?? 0)}
+          detail="Active dates only · event totals stay separate"
+          icon={CalendarDays}
         />
-      </div>
+          </div>
 
-      <div className="dashboard-grid">
+          <div className="dashboard-grid">
+        <Panel
+          title="Source coverage"
+          kicker="All-time source dates · cautious union"
+          className="source-coverage-panel"
+        >
+          {loading ? (
+            <Skeleton rows={3} />
+          ) : (
+            <div className="source-coverage-grid">
+            <article>
+              <span className="coverage-source-label coverage-source-label--observed">
+                Observed
+              </span>
+              <strong>
+                {formatNumber(data?.coverage.observed.activeDays ?? 0)} active days
+              </strong>
+              <small>{coverageRange(data?.coverage.observed)}</small>
+              <p>Playback events captured through Spotify Recently Played.</p>
+            </article>
+            <article>
+              <span className="coverage-source-label coverage-source-label--verified">
+                Verified
+              </span>
+              <strong>
+                {formatNumber(data?.coverage.verified.activeDays ?? 0)} active days
+              </strong>
+              <small>{coverageRange(data?.coverage.verified)}</small>
+              <p>Imported Spotify plays lasting at least 30 seconds.</p>
+            </article>
+            <article>
+              <span className="coverage-source-label coverage-source-label--combined">
+                Combined coverage
+              </span>
+              <strong>
+                {formatNumber(data?.coverage.combined.activeDays ?? 0)} active days
+              </strong>
+              <small>{coverageRange(data?.coverage.combined)}</small>
+              <p>
+                Observed dates and qualifying imported dates are unioned; play counts
+                and time are never added together.
+              </p>
+            </article>
+            </div>
+          )}
+        </Panel>
+
         <Panel
           title="Playback pulse"
           kicker="Last 14 days"
@@ -153,11 +248,15 @@ export default function DashboardScreen() {
           <div className="coverage-line">
             <span>
               <Activity size={15} /> First record
-              <strong>{formatDate(data?.coverage.first)}</strong>
+              <strong>
+                {data?.coverage.first ? formatUtcDate(data.coverage.first) : '—'}
+              </strong>
             </span>
             <span>
               Latest record
-              <strong>{formatDate(data?.coverage.latest)}</strong>
+              <strong>
+                {data?.coverage.latest ? formatUtcDate(data.coverage.latest) : '—'}
+              </strong>
             </span>
           </div>
         </Panel>
@@ -241,7 +340,9 @@ export default function DashboardScreen() {
           kicker="Primary artist"
           className="artists-panel"
         >
-          {data?.topArtists.length ? (
+          {loading ? (
+            <Skeleton rows={5} />
+          ) : data?.topArtists.length ? (
             <ol className="artist-bars">
               {data.topArtists.map((artist, index) => (
                 <li key={artist.id}>
@@ -276,7 +377,9 @@ export default function DashboardScreen() {
             />
           )}
         </Panel>
-      </div>
+          </div>
+        </>
+      )}
     </>
   )
 }

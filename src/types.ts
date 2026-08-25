@@ -165,8 +165,16 @@ export interface DashboardData {
     uniqueTracks: number
     activeDays: number
     verifiedStreams: number
+    verifiedTimeMs: number | null
+    combinedActiveDays: number
   }
-  coverage: { first: string | null; latest: string | null }
+  coverage: {
+    first: string | null
+    latest: string | null
+    observed: SourceCoverage
+    verified: SourceCoverage
+    combined: SourceCoverage
+  }
   topTracks: Array<{
     id: string
     name: string
@@ -188,6 +196,56 @@ export interface DashboardData {
     events: number
   }>
   daily: Array<{ day: string; events: number }>
+}
+
+export interface SourceCoverage {
+  first: string | null
+  latest: string | null
+  activeDays: number
+}
+
+export interface HistoryImportIssue {
+  fileName: string
+  rowNumber: number
+  reason: string
+}
+
+export interface HistoryImportPreview {
+  sourceName: string
+  sourceHash: string
+  format: 'zip' | 'json'
+  fileCount: number
+  totalRecords: number
+  validRecords: number
+  importableRecords: number
+  duplicateRecords: number
+  duplicateWithinUploadRecords: number
+  duplicateExistingRecords: number
+  invalidRecords: number
+  ignoredRecords: number
+  qualifyingStreams: number
+  totalMsPlayed: number
+  firstPlayedAt: string | null
+  lastPlayedAt: string | null
+  alreadyImported: boolean
+  issues: HistoryImportIssue[]
+}
+
+export interface HistoryImportBatch {
+  id: number
+  sourceName: string
+  format: 'zip' | 'json'
+  importedAt: string
+  eventCount: number
+  streamCount: number
+  totalMsPlayed: number
+  firstPlayedAt: string | null
+  lastPlayedAt: string | null
+  sourceRecordCount: number
+  validRecordCount: number
+  duplicateCount: number
+  invalidCount: number
+  ignoredCount: number
 }
 
 export interface HistoryItem {
@@ -330,6 +388,25 @@ export interface RecordsData {
       days: number
       startDay: string | null
       endDay: string | null
+    }
+  }
+  combinedCoverage: {
+    includesImportedHistory: boolean
+    activeDays: number
+    firstDay: string | null
+    latestDay: string | null
+    streaks: {
+      current: {
+        days: number
+        startDay: string | null
+        endDay: string | null
+        state: 'active' | 'grace' | 'ended'
+      }
+      longest: {
+        days: number
+        startDay: string | null
+        endDay: string | null
+      }
     }
   }
   milestones: {
