@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { AppContext } from './context'
 import { api } from './lib/api'
+import { resolvePreferredPlaybackDevice } from './lib/spotify'
 import Shell from './components/Shell'
 import DashboardScreen from './screens/DashboardScreen'
 import DataHealthScreen from './screens/DataHealthScreen'
@@ -84,16 +85,9 @@ export default function App() {
           left.name.localeCompare(right.name),
       )
       setPlayerDevices(sorted)
-      setPreferredDeviceId((current) => {
-        if (current && sorted.some((device) => device.id === current)) {
-          return current
-        }
-        return (
-          sorted.find((device) => device.isActive)?.id ??
-          sorted.find((device) => device.type.toLowerCase() === 'computer')?.id ??
-          null
-        )
-      })
+      setPreferredDeviceId((current) =>
+        resolvePreferredPlaybackDevice(sorted, current),
+      )
     } catch (error) {
       setPlayerError(
         error instanceof Error ? error.message : 'Device lookup failed.',
@@ -199,11 +193,18 @@ export default function App() {
 
   const selectPlaybackDevice = useCallback(
     async (deviceId: string): Promise<boolean> => {
-      setPreferredDeviceId(deviceId)
-      return runPlayerControl('/api/player/device', 'PUT', {
-        deviceId,
+      const trimmed = deviceId.trim()
+      if (!trimmed) {
+        setPreferredDeviceId(null)
+        setPlayerError(null)
+        return true
+      }
+      const transferred = await runPlayerControl('/api/player/device', 'PUT', {
+        deviceId: trimmed,
         isPlaying: player?.isPlaying ?? false,
       })
+      if (transferred) setPreferredDeviceId(trimmed)
+      return transferred
     },
     [player?.isPlaying, runPlayerControl],
   )
