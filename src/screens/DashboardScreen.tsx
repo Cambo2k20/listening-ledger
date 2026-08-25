@@ -19,10 +19,7 @@ import {
   Panel,
   Skeleton,
 } from '../components/Ui'
-import {
-  SpotifyDestinationLinks,
-  TrackPlayButton,
-} from '../components/SpotifyActions'
+import { SpotifyDesktopTextLink } from '../components/SpotifyActions'
 
 const periods = [
   { value: '7d', label: '7 days' },
@@ -180,25 +177,47 @@ export default function DashboardScreen() {
               {data.topTracks.map((track, index) => (
                 <li key={track.id}>
                   <span className="rank-number">{index + 1}</span>
-                  {track.imageUrl ? (
-                    <img src={track.imageUrl} alt="" />
-                  ) : (
-                    <span className="art-placeholder">
-                      <Disc3 size={18} />
-                    </span>
-                  )}
+                  <SpotifyDesktopTextLink
+                    spotifyUri={track.spotifyUri}
+                    label={track.name}
+                    className="spotify-desktop-art-link"
+                  >
+                    {track.imageUrl ? (
+                      <img src={track.imageUrl} alt="" />
+                    ) : (
+                      <span className="art-placeholder">
+                        <Disc3 size={18} />
+                      </span>
+                    )}
+                  </SpotifyDesktopTextLink>
                   <div>
-                    <span className="track-title-actions">
-                      <TrackPlayButton spotifyUri={track.spotifyUri}>
-                        {track.name}
-                      </TrackPlayButton>
-                      <SpotifyDestinationLinks
+                    <SpotifyDesktopTextLink
+                      spotifyUri={track.spotifyUri}
+                      label={track.name}
+                    >
+                      {track.name}
+                    </SpotifyDesktopTextLink>
+                    <span className="overview-track-meta">
+                      <SpotifyDesktopTextLink
                         spotifyUri={track.spotifyUri}
-                        spotifyUrl={track.spotifyUrl}
-                        label={track.name}
-                      />
+                        label={`${track.name} by ${track.artists}`}
+                        className="spotify-desktop-text-link--meta"
+                      >
+                        {track.artists}
+                      </SpotifyDesktopTextLink>
+                      {track.albumName && (
+                        <>
+                          <i aria-hidden="true">·</i>
+                          <SpotifyDesktopTextLink
+                            spotifyUri={track.albumUri ?? track.spotifyUri}
+                            label={track.albumName}
+                            className="spotify-desktop-text-link--meta"
+                          >
+                            {track.albumName}
+                          </SpotifyDesktopTextLink>
+                        </>
+                      )}
                     </span>
-                    <small>{track.artists}</small>
                   </div>
                   <strong>{track.events}</strong>
                 </li>
@@ -223,14 +242,13 @@ export default function DashboardScreen() {
                 <li key={artist.id}>
                   <div>
                     <span>{index + 1}</span>
-                    <span className="spotify-name-actions">
-                      <span className="spotify-name-link">{artist.name}</span>
-                      <SpotifyDestinationLinks
-                        spotifyUri={artist.spotifyUri}
-                        spotifyUrl={artist.spotifyUrl}
-                        label={artist.name}
-                      />
-                    </span>
+                    <SpotifyDesktopTextLink
+                      spotifyUri={artist.spotifyUri}
+                      label={artist.name}
+                      className="spotify-name-link"
+                    >
+                      {artist.name}
+                    </SpotifyDesktopTextLink>
                     <strong>{artist.events}</strong>
                   </div>
                   <i>

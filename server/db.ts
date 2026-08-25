@@ -529,7 +529,7 @@ export function getDashboard(period = '30d'): Record<string, unknown> {
 
   const topTracks = db.prepare(`
     SELECT t.id, t.name, t.uri AS spotifyUri, t.spotify_url AS spotifyUrl,
-      al.name AS albumName, al.image_url AS imageUrl,
+      al.name AS albumName, al.uri AS albumUri, al.image_url AS imageUrl,
       GROUP_CONCAT(DISTINCT ar.name) AS artists,
       COUNT(*) AS events
     FROM play_events pe
@@ -586,7 +586,7 @@ export function getHistory(query = '', limit = 100): Record<string, unknown>[] {
   return db.prepare(`
     SELECT pe.id, pe.played_at AS playedAt, pe.context_uri AS contextUri,
       t.name AS trackName, t.uri AS spotifyUri, t.spotify_url AS spotifyUrl,
-      al.name AS albumName, al.image_url AS imageUrl,
+      al.name AS albumName, al.uri AS albumUri, al.image_url AS imageUrl,
       GROUP_CONCAT(ar.name, ', ') AS artists
     FROM play_events pe
     JOIN tracks t ON t.id = pe.track_id
@@ -631,7 +631,7 @@ export function getRankings(
   }
   return db.prepare(`
     SELECT t.id, t.name, t.uri AS spotifyUri, t.spotify_url AS spotifyUrl,
-      al.name AS albumName, al.image_url AS imageUrl,
+      al.name AS albumName, al.uri AS albumUri, al.image_url AS imageUrl,
       GROUP_CONCAT(DISTINCT ar.name) AS artists,
       COUNT(*) AS events, MAX(pe.played_at) AS lastPlayed
     FROM play_events pe

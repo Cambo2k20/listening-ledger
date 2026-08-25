@@ -4,10 +4,7 @@ import { EmptyState, PageIntro, Panel, Skeleton } from '../components/Ui'
 import { api } from '../lib/api'
 import { formatDateTime } from '../lib/format'
 import type { HistoryItem } from '../types'
-import {
-  SpotifyDestinationLinks,
-  TrackPlayButton,
-} from '../components/SpotifyActions'
+import { SpotifyDesktopTextLink } from '../components/SpotifyActions'
 
 export default function HistoryScreen() {
   const [query, setQuery] = useState('')
@@ -54,27 +51,45 @@ export default function HistoryScreen() {
           <div className="history-list">
             {items.map((item) => (
               <article key={item.id}>
-                {item.imageUrl ? (
-                  <img src={item.imageUrl} alt="" />
-                ) : (
-                  <span className="art-placeholder art-placeholder--large">
-                    <Disc3 size={21} />
-                  </span>
-                )}
+                <SpotifyDesktopTextLink
+                  spotifyUri={item.spotifyUri}
+                  label={item.trackName}
+                  className="spotify-desktop-art-link"
+                >
+                  {item.imageUrl ? (
+                    <img src={item.imageUrl} alt="" />
+                  ) : (
+                    <span className="art-placeholder art-placeholder--large">
+                      <Disc3 size={21} />
+                    </span>
+                  )}
+                </SpotifyDesktopTextLink>
                 <div className="history-track">
-                  <span className="track-title-actions">
-                    <TrackPlayButton spotifyUri={item.spotifyUri}>
-                      {item.trackName}
-                    </TrackPlayButton>
-                    <SpotifyDestinationLinks
-                      spotifyUri={item.spotifyUri}
-                      spotifyUrl={item.spotifyUrl}
-                      label={item.trackName}
-                    />
-                  </span>
-                  <small>{item.artists}</small>
+                  <SpotifyDesktopTextLink
+                    spotifyUri={item.spotifyUri}
+                    label={item.trackName}
+                  >
+                    {item.trackName}
+                  </SpotifyDesktopTextLink>
+                  <SpotifyDesktopTextLink
+                    spotifyUri={item.spotifyUri}
+                    label={`${item.trackName} by ${item.artists}`}
+                    className="spotify-desktop-text-link--meta"
+                  >
+                    {item.artists}
+                  </SpotifyDesktopTextLink>
                 </div>
-                <span className="history-album">{item.albumName}</span>
+                {item.albumName ? (
+                  <SpotifyDesktopTextLink
+                    spotifyUri={item.albumUri ?? item.spotifyUri}
+                    label={item.albumName}
+                    className="spotify-desktop-text-link--meta history-album"
+                  >
+                    {item.albumName}
+                  </SpotifyDesktopTextLink>
+                ) : (
+                  <span />
+                )}
                 <time dateTime={item.playedAt}>{formatDateTime(item.playedAt)}</time>
                 <span className="observed-pill">Observed</span>
               </article>

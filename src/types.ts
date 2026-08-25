@@ -116,6 +116,7 @@ export interface DashboardData {
     name: string
     artists: string
     albumName?: string
+    albumUri?: string
     imageUrl?: string
     spotifyUri: string
     spotifyUrl?: string
@@ -137,6 +138,7 @@ export interface HistoryItem {
   trackName: string
   artists: string
   albumName?: string
+  albumUri?: string
   imageUrl?: string
   spotifyUri: string
   spotifyUrl?: string
@@ -148,6 +150,7 @@ export interface RankingItem {
   name: string
   artists?: string
   albumName?: string
+  albumUri?: string
   imageUrl?: string
   spotifyUri: string
   spotifyUrl?: string

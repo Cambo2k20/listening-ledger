@@ -13,7 +13,7 @@ import {
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAppContext } from '../context'
-import { SpotifyDestinationLinks } from './SpotifyActions'
+import { SpotifyDesktopTextLink } from './SpotifyActions'
 import { SpotifyAttribution } from './SpotifyAttribution'
 
 function formatDuration(value: number): string {
@@ -118,25 +118,25 @@ export default function PlayerBar() {
       ) : (
         <>
           <div className="player-track">
-            {player?.track?.imageUrl ? (
-              <img src={player.track.imageUrl} alt="" />
-            ) : (
-              <span className="player-art-placeholder"><Disc3 size={20} /></span>
-            )}
-            <div>
-              <strong>{player?.track?.trackName ?? 'Nothing playing yet'}</strong>
-              <small>
-                {player?.track
-                  ? `${player.track.artistName}${player.track.albumName ? ` · ${player.track.albumName}` : ''}`
-                  : 'Start Spotify Desktop or the Web Player, then refresh devices.'}
-              </small>
-            </div>
-            <SpotifyDestinationLinks
+            <SpotifyDesktopTextLink
               spotifyUri={player?.track?.spotifyUri ?? 'spotify:'}
-              spotifyUrl={player?.track?.spotifyUrl}
               label={player?.track?.trackName ?? 'Spotify'}
-              className="player-destination-links"
-            />
+              className="player-track-link"
+            >
+              {player?.track?.imageUrl ? (
+                <img src={player.track.imageUrl} alt="" />
+              ) : (
+                <span className="player-art-placeholder"><Disc3 size={20} /></span>
+              )}
+              <span className="player-track-copy">
+                <strong>{player?.track?.trackName ?? 'Nothing playing yet'}</strong>
+                <small>
+                  {player?.track
+                    ? `${player.track.artistName}${player.track.albumName ? ` · ${player.track.albumName}` : ''}`
+                    : 'Start Spotify Desktop or the Web Player, then refresh devices.'}
+                </small>
+              </span>
+            </SpotifyDesktopTextLink>
           </div>
 
           <div className="player-centre">

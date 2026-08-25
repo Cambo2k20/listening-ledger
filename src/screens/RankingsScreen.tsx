@@ -4,10 +4,7 @@ import { EmptyState, PageIntro, Panel, Skeleton } from '../components/Ui'
 import { api } from '../lib/api'
 import { formatDateTime } from '../lib/format'
 import type { RankingItem } from '../types'
-import {
-  SpotifyDestinationLinks,
-  TrackPlayButton,
-} from '../components/SpotifyActions'
+import { SpotifyDesktopTextLink } from '../components/SpotifyActions'
 
 const types = ['track', 'artist', 'album'] as const
 const periods = [
@@ -79,36 +76,52 @@ export default function RankingsScreen() {
                 <span className="ranking-position">
                   {String(index + 1).padStart(2, '0')}
                 </span>
-                {item.imageUrl ? (
-                  <img src={item.imageUrl} alt="" />
-                ) : (
-                  <span className="art-placeholder art-placeholder--large">
-                    <Disc3 size={20} />
-                  </span>
-                )}
-                <div className="ranking-name">
-                  {type === 'track' ? (
-                    <span className="track-title-actions">
-                      <TrackPlayButton spotifyUri={item.spotifyUri}>
-                        {item.name}
-                      </TrackPlayButton>
-                      <SpotifyDestinationLinks
-                        spotifyUri={item.spotifyUri}
-                        spotifyUrl={item.spotifyUrl}
-                        label={item.name}
-                      />
-                    </span>
+                <SpotifyDesktopTextLink
+                  spotifyUri={item.spotifyUri}
+                  label={item.name}
+                  className="spotify-desktop-art-link"
+                >
+                  {item.imageUrl ? (
+                    <img src={item.imageUrl} alt="" />
                   ) : (
-                    <span className="spotify-name-actions">
-                      <span className="spotify-name-link">{item.name}</span>
-                      <SpotifyDestinationLinks
-                        spotifyUri={item.spotifyUri}
-                        spotifyUrl={item.spotifyUrl}
-                        label={item.name}
-                      />
+                    <span className="art-placeholder art-placeholder--large">
+                      <Disc3 size={20} />
                     </span>
                   )}
-                  <small>{item.artists || item.albumName || 'Primary artist'}</small>
+                </SpotifyDesktopTextLink>
+                <div className="ranking-name">
+                  <SpotifyDesktopTextLink
+                    spotifyUri={item.spotifyUri}
+                    label={item.name}
+                    className="spotify-name-link"
+                  >
+                    {item.name}
+                  </SpotifyDesktopTextLink>
+                  {(item.artists || item.albumName) && (
+                    <span className="ranking-detail-links">
+                      {item.artists && (
+                        <SpotifyDesktopTextLink
+                          spotifyUri={item.spotifyUri}
+                          label={`${item.name} by ${item.artists}`}
+                          className="spotify-desktop-text-link--meta"
+                        >
+                          {item.artists}
+                        </SpotifyDesktopTextLink>
+                      )}
+                      {type === 'track' && item.albumName && (
+                        <>
+                          <i aria-hidden="true">·</i>
+                          <SpotifyDesktopTextLink
+                            spotifyUri={item.albumUri ?? item.spotifyUri}
+                            label={item.albumName}
+                            className="spotify-desktop-text-link--meta"
+                          >
+                            {item.albumName}
+                          </SpotifyDesktopTextLink>
+                        </>
+                      )}
+                    </span>
+                  )}
                 </div>
                 <span className="ranking-last">
                   {item.lastPlayed ? formatDateTime(item.lastPlayed) : '—'}
