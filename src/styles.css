@@ -860,7 +860,23 @@ select:focus-visible {
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
+  width: 45px;
+  height: 45px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
   color: var(--faint);
+  background: var(--surface-2);
+  font-size: 23px;
+  transition:
+    border-color 140ms ease,
+    color 140ms ease,
+    background 140ms ease,
+    transform 140ms ease;
+}
+
+.spotify-app-link svg {
+  width: 23px;
+  height: 23px;
 }
 
 .spotify-destination-links,
@@ -880,7 +896,15 @@ select:focus-visible {
 }
 
 .spotify-app-link:hover {
+  border-color: color-mix(in srgb, var(--lime) 54%, var(--line));
   color: var(--lime);
+  background: color-mix(in srgb, var(--lime) 9%, var(--surface-2));
+  transform: translateY(-1px);
+}
+
+.spotify-app-link:focus-visible {
+  outline: 2px solid var(--lime);
+  outline-offset: 2px;
 }
 
 .spotify-app-link--web {
@@ -2050,19 +2074,6 @@ code {
   gap: 3px;
 }
 
-.result-title-row a {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  width: fit-content;
-  max-width: 100%;
-  overflow: hidden;
-  font-size: 0.75rem;
-  font-weight: 750;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .result-title-row small,
 .result-status {
   color: var(--faint);
@@ -2267,7 +2278,7 @@ code {
 
 .player-track {
   display: grid;
-  grid-template-columns: 52px minmax(0, 1fr) 36px;
+  grid-template-columns: 52px minmax(0, 1fr) 95px;
   align-items: center;
   gap: 10px;
   min-width: 0;
@@ -2832,8 +2843,13 @@ code {
   }
 
   .player-track {
-    grid-template-columns: 42px minmax(0, 1fr) 34px;
+    grid-template-columns: 42px minmax(0, 1fr) 85px;
     gap: 8px;
+  }
+
+  .spotify-app-link {
+    width: 40px;
+    height: 40px;
   }
 
   .player-track img,
