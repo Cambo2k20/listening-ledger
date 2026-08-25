@@ -3,12 +3,21 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { DatabaseSync } from 'node:sqlite'
 import type {
+  DiscoveryFeedbackStatus,
+  DiscoveryMode,
+  DiscoverySeed,
+  DiscoverySessionRecord,
+  RankedDiscoveryCandidate,
   SpotifyTrack,
   StoredToken,
   TrendEvent,
   TrendInsight,
 } from './types.ts'
 import { buildTrendInsights } from './lib/trends.ts'
+import {
+  discoveryTrackKey,
+  normalizeDiscoveryText,
+} from './lib/discovery-ranking.ts'
 
 const serverDir = dirname(fileURLToPath(import.meta.url))
 const projectRoot = join(serverDir, '..')
@@ -139,6 +148,67 @@ db.exec(`
     UNIQUE (played_at, track_uri, ms_played),
     FOREIGN KEY (batch_id) REFERENCES import_batches(id)
   );
+
+  CREATE TABLE IF NOT EXISTS discovery_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    target_count INTEGER NOT NULL,
+    seed_json TEXT NOT NULL,
+    playlist_id TEXT,
+    playlist_name TEXT,
+    playlist_url TEXT,
+    saved_at TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS discovery_candidates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL,
+    position INTEGER NOT NULL,
+    spotify_track_id TEXT NOT NULL,
+    spotify_uri TEXT NOT NULL,
+    track_name TEXT NOT NULL,
+    artist_name TEXT NOT NULL,
+    album_name TEXT,
+    image_url TEXT,
+    spotify_url TEXT,
+    duration_ms INTEGER,
+    similarity REAL NOT NULL,
+    seed_hits INTEGER NOT NULL,
+    seed_keys_json TEXT NOT NULL DEFAULT '[]',
+    seed_labels_json TEXT NOT NULL DEFAULT '[]',
+    score INTEGER NOT NULL,
+    reason TEXT NOT NULL,
+    is_new_artist INTEGER NOT NULL,
+    decision TEXT NOT NULL DEFAULT 'neutral',
+    UNIQUE (session_id, spotify_track_id),
+    FOREIGN KEY (session_id) REFERENCES discovery_sessions(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_discovery_candidates_session
+    ON discovery_candidates(session_id, position);
+
+  CREATE TABLE IF NOT EXISTS discovery_feedback (
+    canonical_key TEXT PRIMARY KEY,
+    spotify_track_id TEXT,
+    track_name TEXT NOT NULL,
+    artist_name TEXT NOT NULL,
+    status TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS discovery_resolution_cache (
+    canonical_key TEXT PRIMARY KEY,
+    spotify_track_id TEXT NOT NULL,
+    spotify_uri TEXT NOT NULL,
+    track_name TEXT NOT NULL,
+    artist_name TEXT NOT NULL,
+    album_name TEXT,
+    image_url TEXT,
+    spotify_url TEXT,
+    duration_ms INTEGER,
+    resolved_at TEXT NOT NULL
+  );
 `)
 
 const syncRunColumns = db.prepare('PRAGMA table_info(sync_runs)').all() as Array<{
@@ -146,6 +216,20 @@ const syncRunColumns = db.prepare('PRAGMA table_info(sync_runs)').all() as Array
 }>
 if (!syncRunColumns.some((column) => column.name === 'kind')) {
   db.exec("ALTER TABLE sync_runs ADD COLUMN kind TEXT NOT NULL DEFAULT 'recent'")
+}
+
+const discoveryCandidateColumns = db
+  .prepare('PRAGMA table_info(discovery_candidates)')
+  .all() as Array<{ name: string }>
+if (!discoveryCandidateColumns.some((column) => column.name === 'seed_keys_json')) {
+  db.exec(
+    "ALTER TABLE discovery_candidates ADD COLUMN seed_keys_json TEXT NOT NULL DEFAULT '[]'",
+  )
+}
+if (!discoveryCandidateColumns.some((column) => column.name === 'seed_labels_json')) {
+  db.exec(
+    "ALTER TABLE discovery_candidates ADD COLUMN seed_labels_json TEXT NOT NULL DEFAULT '[]'",
+  )
 }
 
 const upsertAlbum = db.prepare(`
@@ -650,4 +734,379 @@ export function getExportData(): Record<string, unknown>[] {
       ORDER BY pe.played_at DESC
     `)
     .all() as Record<string, unknown>[]
+}
+
+export function getLedgerDiscoverySeeds(
+  query = '',
+  limit = 30,
+): DiscoverySeed[] {
+  const safeLimit = Math.min(Math.max(Math.floor(limit), 1), 50)
+  const search = `%${query.trim()}%`
+  const rows = db
+    .prepare(`
+      SELECT t.id AS spotifyTrackId, t.uri AS spotifyUri,
+        t.name AS trackName, ar.name AS artistName,
+        al.name AS albumName, al.image_url AS imageUrl,
+        t.spotify_url AS spotifyUrl, COUNT(pe.id) AS events
+      FROM tracks t
+      JOIN track_artists ta ON ta.track_id = t.id AND ta.position = 0
+      JOIN artists ar ON ar.id = ta.artist_id
+      LEFT JOIN albums al ON al.id = t.album_id
+      LEFT JOIN play_events pe ON pe.track_id = t.id
+      WHERE (? = '%%' OR t.name LIKE ? OR ar.name LIKE ? OR al.name LIKE ?)
+      GROUP BY t.id
+      ORDER BY events DESC, MAX(pe.played_at) DESC, t.name
+      LIMIT ?
+    `)
+    .all(search, search, search, search, safeLimit) as Array<
+    Omit<DiscoverySeed, 'source'>
+  >
+  return rows.map((row) => ({ ...row, source: 'ledger' }))
+}
+
+export function getKnownDiscoveryCatalog(): {
+  trackIds: Set<string>
+  trackKeys: Set<string>
+  artistKeys: Set<string>
+} {
+  const rows = db
+    .prepare(`
+      SELECT t.id AS trackId, t.name AS trackName, ar.name AS artistName
+      FROM tracks t
+      JOIN track_artists ta ON ta.track_id = t.id AND ta.position = 0
+      JOIN artists ar ON ar.id = ta.artist_id
+    `)
+    .all() as Array<{ trackId: string; trackName: string; artistName: string }>
+  return {
+    trackIds: new Set(rows.map((row) => row.trackId)),
+    trackKeys: new Set(
+      rows.map((row) => discoveryTrackKey(row.artistName, row.trackName)),
+    ),
+    artistKeys: new Set(
+      rows.map((row) => normalizeDiscoveryText(row.artistName)),
+    ),
+  }
+}
+
+export function getDiscoveryFeedbackMap(): Map<
+  string,
+  DiscoveryFeedbackStatus
+> {
+  const rows = db
+    .prepare(`
+      SELECT canonical_key AS canonicalKey, spotify_track_id AS spotifyTrackId,
+        status
+      FROM discovery_feedback
+    `)
+    .all() as Array<{
+    canonicalKey: string
+    spotifyTrackId: string | null
+    status: DiscoveryFeedbackStatus
+  }>
+  const result = new Map<string, DiscoveryFeedbackStatus>()
+  for (const row of rows) {
+    result.set(row.canonicalKey, row.status)
+    if (row.spotifyTrackId) result.set(row.spotifyTrackId, row.status)
+  }
+  return result
+}
+
+export function getCachedDiscoveryTrack(canonicalKey: string):
+  | {
+      spotifyTrackId: string
+      spotifyUri: string
+      trackName: string
+      artistName: string
+      albumName?: string
+      imageUrl?: string
+      spotifyUrl?: string
+      durationMs?: number
+    }
+  | null {
+  const row = db
+    .prepare(`
+      SELECT spotify_track_id AS spotifyTrackId, spotify_uri AS spotifyUri,
+        track_name AS trackName, artist_name AS artistName,
+        album_name AS albumName, image_url AS imageUrl,
+        spotify_url AS spotifyUrl, duration_ms AS durationMs
+      FROM discovery_resolution_cache
+      WHERE canonical_key = ?
+    `)
+    .get(canonicalKey) as
+    | {
+        spotifyTrackId: string
+        spotifyUri: string
+        trackName: string
+        artistName: string
+        albumName?: string
+        imageUrl?: string
+        spotifyUrl?: string
+        durationMs?: number
+      }
+    | undefined
+  return row ?? null
+}
+
+export function saveCachedDiscoveryTrack(
+  canonicalKey: string,
+  track: {
+    spotifyTrackId: string
+    spotifyUri: string
+    trackName: string
+    artistName: string
+    albumName?: string
+    imageUrl?: string
+    spotifyUrl?: string
+    durationMs?: number
+  },
+): void {
+  db.prepare(`
+    INSERT INTO discovery_resolution_cache
+      (canonical_key, spotify_track_id, spotify_uri, track_name, artist_name,
+       album_name, image_url, spotify_url, duration_ms, resolved_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(canonical_key) DO UPDATE SET
+      spotify_track_id = excluded.spotify_track_id,
+      spotify_uri = excluded.spotify_uri,
+      track_name = excluded.track_name,
+      artist_name = excluded.artist_name,
+      album_name = excluded.album_name,
+      image_url = excluded.image_url,
+      spotify_url = excluded.spotify_url,
+      duration_ms = excluded.duration_ms,
+      resolved_at = excluded.resolved_at
+  `).run(
+    canonicalKey,
+    track.spotifyTrackId,
+    track.spotifyUri,
+    track.trackName,
+    track.artistName,
+    track.albumName ?? null,
+    track.imageUrl ?? null,
+    track.spotifyUrl ?? null,
+    track.durationMs ?? null,
+    new Date().toISOString(),
+  )
+}
+
+export function createDiscoverySession(
+  mode: DiscoveryMode,
+  targetCount: number,
+  seeds: DiscoverySeed[],
+): number {
+  const result = db
+    .prepare(`
+      INSERT INTO discovery_sessions (created_at, mode, target_count, seed_json)
+      VALUES (?, ?, ?, ?)
+    `)
+    .run(
+      new Date().toISOString(),
+      mode,
+      targetCount,
+      JSON.stringify(seeds),
+    )
+  return Number(result.lastInsertRowid)
+}
+
+export function saveDiscoveryCandidates(
+  sessionId: number,
+  candidates: RankedDiscoveryCandidate[],
+): void {
+  const statement = db.prepare(`
+    INSERT INTO discovery_candidates
+      (session_id, position, spotify_track_id, spotify_uri, track_name,
+       artist_name, album_name, image_url, spotify_url, duration_ms,
+       similarity, seed_hits, seed_keys_json, seed_labels_json, score, reason,
+       is_new_artist, decision)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `)
+  db.exec('BEGIN')
+  try {
+    candidates.forEach((candidate, index) => {
+      statement.run(
+        sessionId,
+        index + 1,
+        candidate.spotifyTrackId,
+        candidate.spotifyUri,
+        candidate.trackName,
+        candidate.artistName,
+        candidate.albumName ?? null,
+        candidate.imageUrl ?? null,
+        candidate.spotifyUrl ?? null,
+        candidate.durationMs ?? null,
+        candidate.match,
+        candidate.seedKeys.length,
+        JSON.stringify(candidate.seedKeys),
+        JSON.stringify(candidate.seedLabels),
+        candidate.score,
+        candidate.reason,
+        candidate.isNewArtist ? 1 : 0,
+        candidate.decision,
+      )
+    })
+    db.exec('COMMIT')
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
+}
+
+export function getDiscoverySession(
+  id?: number,
+): DiscoverySessionRecord | null {
+  const session = (
+    id
+      ? db
+          .prepare(`
+            SELECT id, created_at AS createdAt, mode,
+              target_count AS targetCount, seed_json AS seedJson,
+              playlist_id AS playlistId, playlist_name AS playlistName,
+              playlist_url AS playlistUrl, saved_at AS savedAt
+            FROM discovery_sessions WHERE id = ?
+          `)
+          .get(id)
+      : db
+          .prepare(`
+            SELECT id, created_at AS createdAt, mode,
+              target_count AS targetCount, seed_json AS seedJson,
+              playlist_id AS playlistId, playlist_name AS playlistName,
+              playlist_url AS playlistUrl, saved_at AS savedAt
+            FROM discovery_sessions ORDER BY id DESC LIMIT 1
+          `)
+          .get()
+  ) as
+    | {
+        id: number
+        createdAt: string
+        mode: DiscoveryMode
+        targetCount: number
+        seedJson: string
+        playlistId?: string
+        playlistName?: string
+        playlistUrl?: string
+        savedAt?: string
+      }
+    | undefined
+  if (!session) return null
+  const candidates = db
+    .prepare(`
+      SELECT id, position, spotify_track_id AS spotifyTrackId,
+        spotify_uri AS spotifyUri, track_name AS trackName,
+        artist_name AS artistName, album_name AS albumName,
+        image_url AS imageUrl, spotify_url AS spotifyUrl,
+        duration_ms AS durationMs, similarity AS match,
+        seed_keys_json AS seedKeysJson, seed_labels_json AS seedLabelsJson,
+        score, reason, is_new_artist AS isNewArtist, decision
+      FROM discovery_candidates
+      WHERE session_id = ?
+      ORDER BY position
+    `)
+    .all(session.id) as Array<{
+    id: number
+    position: number
+    spotifyTrackId: string
+    spotifyUri: string
+    trackName: string
+    artistName: string
+    albumName?: string
+    imageUrl?: string
+    spotifyUrl?: string
+    durationMs?: number
+    match: number
+    seedKeysJson: string
+    seedLabelsJson: string
+    score: number
+    reason: string
+    isNewArtist: number
+    decision: DiscoveryFeedbackStatus
+  }>
+  return {
+    ...session,
+    seeds: JSON.parse(session.seedJson) as DiscoverySeed[],
+    candidates: candidates.map(({ seedKeysJson, seedLabelsJson, ...candidate }) => ({
+      ...candidate,
+      isNewArtist: Boolean(candidate.isNewArtist),
+      seedKeys: JSON.parse(seedKeysJson) as string[],
+      seedLabels: JSON.parse(seedLabelsJson) as string[],
+    })),
+  }
+}
+
+export function setDiscoveryFeedback(
+  candidateId: number,
+  status: DiscoveryFeedbackStatus,
+): void {
+  const candidate = db
+    .prepare(`
+      SELECT spotify_track_id AS spotifyTrackId, track_name AS trackName,
+        artist_name AS artistName
+      FROM discovery_candidates WHERE id = ?
+    `)
+    .get(candidateId) as
+    | { spotifyTrackId: string; trackName: string; artistName: string }
+    | undefined
+  if (!candidate) throw new Error('Discovery candidate not found.')
+  const key = discoveryTrackKey(candidate.artistName, candidate.trackName)
+  db.prepare(`
+    UPDATE discovery_candidates SET decision = ? WHERE spotify_track_id = ?
+  `).run(status, candidate.spotifyTrackId)
+  if (status === 'neutral') {
+    db.prepare('DELETE FROM discovery_feedback WHERE canonical_key = ?').run(key)
+    return
+  }
+  db.prepare(`
+    INSERT INTO discovery_feedback
+      (canonical_key, spotify_track_id, track_name, artist_name, status, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(canonical_key) DO UPDATE SET
+      spotify_track_id = excluded.spotify_track_id,
+      track_name = excluded.track_name,
+      artist_name = excluded.artist_name,
+      status = excluded.status,
+      updated_at = excluded.updated_at
+  `).run(
+    key,
+    candidate.spotifyTrackId,
+    candidate.trackName,
+    candidate.artistName,
+    status,
+    new Date().toISOString(),
+  )
+}
+
+export function getDiscoveryPlaylistTracks(sessionId: number): Array<{
+  spotifyUri: string
+  trackName: string
+  artistName: string
+}> {
+  return db
+    .prepare(`
+      SELECT spotify_uri AS spotifyUri, track_name AS trackName,
+        artist_name AS artistName
+      FROM discovery_candidates
+      WHERE session_id = ? AND decision NOT IN ('reject', 'known')
+      ORDER BY position
+    `)
+    .all(sessionId) as Array<{
+    spotifyUri: string
+    trackName: string
+    artistName: string
+  }>
+}
+
+export function markDiscoveryPlaylistSaved(
+  sessionId: number,
+  playlist: { id: string; name: string; url?: string },
+): void {
+  db.prepare(`
+    UPDATE discovery_sessions
+    SET playlist_id = ?, playlist_name = ?, playlist_url = ?, saved_at = ?
+    WHERE id = ?
+  `).run(
+    playlist.id,
+    playlist.name,
+    playlist.url ?? null,
+    new Date().toISOString(),
+    sessionId,
+  )
 }

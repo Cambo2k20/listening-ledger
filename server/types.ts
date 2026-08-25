@@ -64,3 +64,65 @@ export interface TrendInsight {
   detail: string
 }
 
+export type DiscoveryMode = 'safe' | 'balanced' | 'wild'
+export type DiscoverySeedSource = 'ledger' | 'top' | 'liked' | 'search'
+export type DiscoveryFeedbackStatus = 'love' | 'reject' | 'known' | 'neutral'
+
+export interface DiscoverySeed {
+  spotifyTrackId: string
+  spotifyUri: string
+  trackName: string
+  artistName: string
+  albumName?: string
+  imageUrl?: string
+  spotifyUrl?: string
+  source: DiscoverySeedSource
+  events?: number
+}
+
+export interface LastFmCandidate {
+  trackName: string
+  artistName: string
+  match: number
+  seedKey: string
+  seedLabel: string
+}
+
+export interface ResolvedDiscoveryCandidate {
+  spotifyTrackId: string
+  spotifyUri: string
+  trackName: string
+  artistName: string
+  albumName?: string
+  imageUrl?: string
+  spotifyUrl?: string
+  durationMs?: number
+  match: number
+  seedKeys: string[]
+  seedLabels: string[]
+}
+
+export interface RankedDiscoveryCandidate extends ResolvedDiscoveryCandidate {
+  score: number
+  reason: string
+  isNewArtist: boolean
+  decision: DiscoveryFeedbackStatus
+}
+
+export interface DiscoveryCandidateRecord extends RankedDiscoveryCandidate {
+  id: number
+  position: number
+}
+
+export interface DiscoverySessionRecord {
+  id: number
+  createdAt: string
+  mode: DiscoveryMode
+  targetCount: number
+  seeds: DiscoverySeed[]
+  playlistId?: string
+  playlistName?: string
+  playlistUrl?: string
+  savedAt?: string
+  candidates: DiscoveryCandidateRecord[]
+}

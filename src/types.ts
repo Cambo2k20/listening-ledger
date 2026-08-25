@@ -10,6 +10,67 @@ export interface AppStatus {
   account: Account | null
   redirectUri: string
   scopes: string[]
+  grantedScopes: string[]
+  missingScopes: string[]
+  lastFmConfigured: boolean
+}
+
+export type DiscoveryMode = 'safe' | 'balanced' | 'wild'
+export type DiscoverySeedSource = 'ledger' | 'top' | 'liked' | 'search'
+export type DiscoveryFeedbackStatus = 'love' | 'reject' | 'known' | 'neutral'
+
+export interface DiscoverySeed {
+  spotifyTrackId: string
+  spotifyUri: string
+  trackName: string
+  artistName: string
+  albumName?: string
+  imageUrl?: string
+  spotifyUrl?: string
+  source: DiscoverySeedSource
+  events?: number
+}
+
+export interface DiscoveryCandidate {
+  id: number
+  position: number
+  spotifyTrackId: string
+  spotifyUri: string
+  trackName: string
+  artistName: string
+  albumName?: string
+  imageUrl?: string
+  spotifyUrl?: string
+  durationMs?: number
+  match: number
+  seedKeys: string[]
+  seedLabels: string[]
+  score: number
+  reason: string
+  isNewArtist: boolean
+  decision: DiscoveryFeedbackStatus
+}
+
+export interface DiscoverySession {
+  id: number
+  createdAt: string
+  mode: DiscoveryMode
+  targetCount: number
+  seeds: DiscoverySeed[]
+  playlistId?: string
+  playlistName?: string
+  playlistUrl?: string
+  savedAt?: string
+  candidates: DiscoveryCandidate[]
+}
+
+export interface DiscoveryStatus {
+  lastFmConfigured: boolean
+  grantedScopes: string[]
+  missingScopes: string[]
+  likedSeedsAvailable: boolean
+  playlistSaveAvailable: boolean
+  latestSession: DiscoverySession | null
 }
 
 export interface DashboardData {

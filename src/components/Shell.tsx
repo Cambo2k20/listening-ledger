@@ -6,6 +6,7 @@ import {
   Gauge,
   History,
   Menu,
+  Radar,
   RefreshCw,
   Settings,
   X,
@@ -19,6 +20,7 @@ const navigation = [
   { to: '/history', label: 'History', icon: History },
   { to: '/rankings', label: 'Rankings', icon: BarChart3 },
   { to: '/trends', label: 'Trends', icon: Activity },
+  { to: '/discover', label: 'Discover', icon: Radar },
   { to: '/health', label: 'Data health', icon: DatabaseZap },
   { to: '/settings', label: 'Settings', icon: Settings },
 ]
@@ -28,6 +30,7 @@ const pageNames: Record<string, string> = {
   '/history': 'Listening history',
   '/rankings': 'Your rankings',
   '/trends': 'Listening trends',
+  '/discover': 'Discover music',
   '/health': 'Data health',
   '/settings': 'Settings',
 }
@@ -148,4 +151,3 @@ export default function Shell() {
     </div>
   )
 }
-

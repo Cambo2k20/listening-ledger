@@ -15,18 +15,26 @@ import {
   startSyncRun,
 } from './db.ts'
 import { deduplicatePlaybackEvents } from './lib/dedup.ts'
+import { normalizeDiscoveryText } from './lib/discovery-ranking.ts'
 import {
   isDailyTopSyncDue,
   SPOTIFY_SYNC_LOCK,
   SYNC_LOCK_TTL_MS,
 } from './lib/sync-schedule.ts'
 import type {
+  DiscoverySeed,
   SpotifyPlayHistoryItem,
+  SpotifyTrack,
   SpotifyTokenResponse,
   StoredToken,
 } from './types.ts'
 
-const scopes = ['user-read-recently-played', 'user-top-read']
+export const SPOTIFY_SCOPES = [
+  'user-read-recently-played',
+  'user-top-read',
+  'user-library-read',
+  'playlist-modify-private',
+] as const
 const pendingAuthorizations = new Map<
   string,
   { verifier: string; expiresAt: number }
@@ -59,7 +67,7 @@ export function createAuthorizationUrl(): string {
   url.searchParams.set('client_id', config.clientId)
   url.searchParams.set('response_type', 'code')
   url.searchParams.set('redirect_uri', config.redirectUri)
-  url.searchParams.set('scope', scopes.join(' '))
+  url.searchParams.set('scope', SPOTIFY_SCOPES.join(' '))
   url.searchParams.set('state', state)
   url.searchParams.set('code_challenge_method', 'S256')
   url.searchParams.set('code_challenge', challenge)
@@ -166,12 +174,17 @@ async function currentAccessToken(): Promise<string> {
 async function spotifyFetch(
   pathOrUrl: string,
   accessToken: string,
+  init: RequestInit = {},
 ): Promise<Response> {
   const url = pathOrUrl.startsWith('https://')
     ? pathOrUrl
     : `https://api.spotify.com${pathOrUrl}`
   let response = await fetch(url, {
-    headers: { Authorization: `Bearer ${accessToken}` },
+    ...init,
+    headers: {
+      ...init.headers,
+      Authorization: `Bearer ${accessToken}`,
+    },
   })
 
   if (response.status === 429) {
@@ -185,7 +198,11 @@ async function spotifyFetch(
         setTimeout(resolve, Math.max(retryAfterSeconds, 1) * 1000),
       )
       response = await fetch(url, {
-        headers: { Authorization: `Bearer ${accessToken}` },
+        ...init,
+        headers: {
+          ...init.headers,
+          Authorization: `Bearer ${accessToken}`,
+        },
       })
     }
   }
@@ -193,16 +210,20 @@ async function spotifyFetch(
   return response
 }
 
-async function spotifyRequest<T>(pathOrUrl: string): Promise<T> {
+async function spotifyRequest<T>(
+  pathOrUrl: string,
+  init: RequestInit = {},
+): Promise<T> {
   const token = await currentAccessToken()
-  const response = await spotifyFetch(pathOrUrl, token)
+  const response = await spotifyFetch(pathOrUrl, token, init)
 
   if (response.status === 401) {
     const stored = getStoredToken()
     if (!stored) throw new SpotifyAuthorizationError('Spotify is not connected.')
     const refreshed = await refreshToken(stored)
-    const retry = await spotifyFetch(pathOrUrl, refreshed.accessToken)
+    const retry = await spotifyFetch(pathOrUrl, refreshed.accessToken, init)
     if (!retry.ok) throw new Error(`Spotify request failed with ${retry.status}.`)
+    if (retry.status === 204) return undefined as T
     return (await retry.json()) as T
   }
 
@@ -224,7 +245,128 @@ async function spotifyRequest<T>(pathOrUrl: string): Promise<T> {
           : `Spotify request failed with ${response.status}.`),
     )
   }
+  if (response.status === 204) return undefined as T
   return (await response.json()) as T
+}
+
+export function getGrantedSpotifyScopes(): string[] {
+  return getStoredToken()?.scope.split(/\s+/).filter(Boolean) ?? []
+}
+
+export function getMissingSpotifyScopes(): string[] {
+  const granted = new Set(getGrantedSpotifyScopes())
+  return SPOTIFY_SCOPES.filter((scope) => !granted.has(scope))
+}
+
+export function hasSpotifyScopes(required: readonly string[]): boolean {
+  const granted = new Set(getGrantedSpotifyScopes())
+  return required.every((scope) => granted.has(scope))
+}
+
+function requireSpotifyScopes(required: readonly string[]): void {
+  const granted = new Set(getGrantedSpotifyScopes())
+  const missing = required.filter((scope) => !granted.has(scope))
+  if (missing.length) {
+    throw new SpotifyAuthorizationError(
+      `Spotify access must be updated to grant: ${missing.join(', ')}.`,
+    )
+  }
+}
+
+function spotifyTrackToSeed(
+  track: SpotifyTrack,
+  source: DiscoverySeed['source'],
+): DiscoverySeed {
+  const imageUrl = [...(track.album.images ?? [])].sort(
+    (left, right) => (left.width ?? 0) - (right.width ?? 0),
+  )[0]?.url
+  return {
+    spotifyTrackId: track.id,
+    spotifyUri: track.uri,
+    trackName: track.name,
+    artistName: track.artists[0]?.name ?? 'Unknown artist',
+    albumName: track.album.name,
+    imageUrl,
+    spotifyUrl: track.external_urls?.spotify,
+    source,
+  }
+}
+
+export async function searchSpotifyTracks(
+  query: string,
+  source: DiscoverySeed['source'] = 'search',
+): Promise<DiscoverySeed[]> {
+  const trimmed = query.trim()
+  if (!trimmed) return []
+  const payload = await spotifyRequest<{ tracks: { items: SpotifyTrack[] } }>(
+    `/v1/search?type=track&limit=10&q=${encodeURIComponent(trimmed)}`,
+  )
+  return payload.tracks.items.map((track) => spotifyTrackToSeed(track, source))
+}
+
+export async function resolveSpotifyTrack(
+  trackName: string,
+  artistName: string,
+): Promise<Omit<DiscoverySeed, 'source'> | null> {
+  const query = `track:${trackName} artist:${artistName}`
+  const payload = await spotifyRequest<{ tracks: { items: SpotifyTrack[] } }>(
+    `/v1/search?type=track&limit=5&q=${encodeURIComponent(query)}`,
+  )
+  const expectedTrack = normalizeDiscoveryText(trackName)
+  const expectedArtist = normalizeDiscoveryText(artistName)
+  const matched = payload.tracks.items.find(
+    (track) =>
+      normalizeDiscoveryText(track.name) === expectedTrack &&
+      track.artists.some(
+        (artist) => normalizeDiscoveryText(artist.name) === expectedArtist,
+      ),
+  )
+  return matched ? spotifyTrackToSeed(matched, 'search') : null
+}
+
+export async function getSpotifyTopTracks(): Promise<DiscoverySeed[]> {
+  requireSpotifyScopes(['user-top-read'])
+  const payload = await spotifyRequest<{ items: SpotifyTrack[] }>(
+    '/v1/me/top/tracks?time_range=short_term&limit=50',
+  )
+  return payload.items.map((track) => spotifyTrackToSeed(track, 'top'))
+}
+
+export async function getLikedSpotifyTracks(): Promise<DiscoverySeed[]> {
+  requireSpotifyScopes(['user-library-read'])
+  const payload = await spotifyRequest<{
+    items: Array<{ track: SpotifyTrack }>
+  }>('/v1/me/tracks?limit=50')
+  return payload.items.map(({ track }) => spotifyTrackToSeed(track, 'liked'))
+}
+
+export async function createPrivateSpotifyPlaylist(
+  name: string,
+  description: string,
+  uris: string[],
+): Promise<{ id: string; name: string; url?: string }> {
+  requireSpotifyScopes(['playlist-modify-private'])
+  const playlist = await spotifyRequest<{
+    id: string
+    name: string
+    external_urls?: { spotify?: string }
+  }>('/v1/me/playlists', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, description, public: false }),
+  })
+  if (uris.length) {
+    await spotifyRequest<void>(`/v1/playlists/${playlist.id}/items`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ uris: uris.slice(0, 100) }),
+    })
+  }
+  return {
+    id: playlist.id,
+    name: playlist.name,
+    url: playlist.external_urls?.spotify,
+  }
 }
 
 async function collectRecentlyPlayed(): Promise<SpotifyPlayHistoryItem[]> {
