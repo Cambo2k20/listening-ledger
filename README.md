@@ -34,6 +34,30 @@ npm.cmd run dev
 
 Open `http://127.0.0.1:5173`.
 
+## Background collection
+
+The synchronization paths are deliberately separate:
+
+```powershell
+npm.cmd run sync:recent
+npm.cmd run sync:top
+```
+
+- `sync:recent` collects and deduplicates Recently Played events. It is safe to
+  run every 15 minutes.
+- `sync:top` captures Spotify's short-, medium-, and long-term Top Items once
+  per UTC day.
+- Both commands use the same SQLite-backed process lock, so a manual sync and a
+  scheduled sync cannot refresh the Spotify token or write listening data at
+  the same time.
+- Spotify rate-limit responses honour `Retry-After` once before the run is
+  recorded as failed.
+
+On this Windows installation, Task Scheduler runs **Listening Ledger - Recent
+Plays** every 15 minutes and **Listening Ledger - Daily Top Items** once daily.
+Both tasks use the repository as their working directory so `.env.local` and
+the local database resolve correctly.
+
 ## Quality checks
 
 ```powershell

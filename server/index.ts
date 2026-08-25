@@ -17,7 +17,7 @@ import {
   completeAuthorization,
   createAuthorizationUrl,
   SpotifyAuthorizationError,
-  syncListeningData,
+  syncRecentPlayback,
 } from './spotify.ts'
 
 const app = express()
@@ -69,7 +69,7 @@ app.get('/api/health', (_request, response) => {
 
 app.post('/api/sync', async (_request, response) => {
   try {
-    response.json(await syncListeningData())
+    response.json(await syncRecentPlayback())
   } catch (error) {
     const status = error instanceof SpotifyAuthorizationError ? 401 : 502
     response.status(status).json({
@@ -159,9 +159,3 @@ if (existsSync(distPath)) {
 app.listen(config.port, '127.0.0.1', () => {
   console.log(`Listening Ledger API: http://127.0.0.1:${config.port}`)
 })
-
-setInterval(() => {
-  if (getStoredToken()) {
-    void syncListeningData().catch(() => undefined)
-  }
-}, 15 * 60_000).unref()

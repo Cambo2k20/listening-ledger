@@ -20,17 +20,17 @@ const riskCopy = {
   },
   healthy: {
     title: 'Collection is current',
-    detail: 'A successful sync was recorded within the last 24 hours.',
+    detail: 'A recent-history sync succeeded within the last hour.',
     icon: CheckCircle2,
   },
   attention: {
     title: 'Sync is getting stale',
-    detail: 'More than 24 hours have passed since the last successful sync.',
+    detail: 'More than one hour has passed since the last recent-history sync.',
     icon: CircleAlert,
   },
   elevated: {
     title: 'Possible collection gap',
-    detail: 'More than 72 hours have passed. Spotify may no longer expose every missed event.',
+    detail: 'More than three hours have passed. Spotify may no longer expose every missed event.',
     icon: CircleAlert,
   },
 }
@@ -106,6 +106,10 @@ export default function DataHealthScreen() {
               <dt>Last successful sync</dt>
               <dd>{relativeTime(data?.lastSuccessAt)}</dd>
             </div>
+            <div>
+              <dt>Target background cadence</dt>
+              <dd>Every {data?.targetSyncIntervalMinutes ?? 15} minutes</dd>
+            </div>
           </dl>
         </Panel>
 
@@ -115,11 +119,16 @@ export default function DataHealthScreen() {
               <span className={`sync-state sync-state--${data.latestSync.status}`}>
                 {data.latestSync.status}
               </span>
-              <strong>{data.latestSync.message || 'No message recorded.'}</strong>
-              <p>
-                {data.latestSync.importedEvents} new event
-                {data.latestSync.importedEvents === 1 ? '' : 's'} imported.
-              </p>
+              <strong>
+                {data.latestSync.kind === 'top' ? 'Daily Top Items' : 'Recent playback'}: {' '}
+                {data.latestSync.message || 'No message recorded.'}
+              </strong>
+              {data.latestSync.kind === 'recent' && (
+                <p>
+                  {data.latestSync.importedEvents} new event
+                  {data.latestSync.importedEvents === 1 ? '' : 's'} imported.
+                </p>
+              )}
               <small>{relativeTime(data.latestSync.completedAt || data.latestSync.startedAt)}</small>
             </div>
           ) : (
@@ -141,4 +150,3 @@ export default function DataHealthScreen() {
     </>
   )
 }
-

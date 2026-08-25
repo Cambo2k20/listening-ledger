@@ -79,6 +79,7 @@ export interface HealthData {
   connected: boolean
   configured: boolean
   latestSync: {
+    kind: 'recent' | 'top'
     startedAt: string
     completedAt?: string
     status: 'running' | 'success' | 'failed'
@@ -89,5 +90,5 @@ export interface HealthData {
   risk: 'not-started' | 'healthy' | 'attention' | 'elevated'
   counts: { observed: number; verified: number; failures: number }
   databasePath: string
+  targetSyncIntervalMinutes: number
 }
-

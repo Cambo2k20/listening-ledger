@@ -20,6 +20,7 @@ export const db = new DatabaseSync(databasePath)
 
 db.exec(`
   PRAGMA journal_mode = WAL;
+  PRAGMA busy_timeout = 5000;
   PRAGMA foreign_keys = ON;
 
   CREATE TABLE IF NOT EXISTS account (
@@ -102,11 +103,19 @@ db.exec(`
 
   CREATE TABLE IF NOT EXISTS sync_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL DEFAULT 'recent',
     started_at TEXT NOT NULL,
     completed_at TEXT,
     status TEXT NOT NULL,
     imported_events INTEGER NOT NULL DEFAULT 0,
     message TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS sync_locks (
+    name TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    acquired_at TEXT NOT NULL,
+    expires_at INTEGER NOT NULL
   );
 
   CREATE TABLE IF NOT EXISTS import_batches (
@@ -131,6 +140,13 @@ db.exec(`
     FOREIGN KEY (batch_id) REFERENCES import_batches(id)
   );
 `)
+
+const syncRunColumns = db.prepare('PRAGMA table_info(sync_runs)').all() as Array<{
+  name: string
+}>
+if (!syncRunColumns.some((column) => column.name === 'kind')) {
+  db.exec("ALTER TABLE sync_runs ADD COLUMN kind TEXT NOT NULL DEFAULT 'recent'")
+}
 
 const upsertAlbum = db.prepare(`
   INSERT INTO albums (id, uri, name, image_url, spotify_url)
@@ -294,13 +310,48 @@ export function getLatestPlayedAt(): string | null {
   return row.latest
 }
 
-export function startSyncRun(): number {
+export type SyncKind = 'recent' | 'top'
+
+export function acquireSyncLock(
+  name: string,
+  owner: string,
+  ttlMs: number,
+  now = Date.now(),
+): boolean {
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    db.prepare('DELETE FROM sync_locks WHERE name = ? AND expires_at <= ?').run(
+      name,
+      now,
+    )
+    const result = db
+      .prepare(`
+        INSERT OR IGNORE INTO sync_locks (name, owner, acquired_at, expires_at)
+        VALUES (?, ?, ?, ?)
+      `)
+      .run(name, owner, new Date(now).toISOString(), now + ttlMs)
+    db.exec('COMMIT')
+    return result.changes > 0
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
+}
+
+export function releaseSyncLock(name: string, owner: string): void {
+  db.prepare('DELETE FROM sync_locks WHERE name = ? AND owner = ?').run(
+    name,
+    owner,
+  )
+}
+
+export function startSyncRun(kind: SyncKind): number {
   const result = db
     .prepare(`
-      INSERT INTO sync_runs (started_at, status)
-      VALUES (?, 'running')
+      INSERT INTO sync_runs (kind, started_at, status)
+      VALUES (?, ?, 'running')
     `)
-    .run(new Date().toISOString())
+    .run(kind, new Date().toISOString())
   return Number(result.lastInsertRowid)
 }
 
@@ -349,6 +400,19 @@ export function saveTopSnapshot(
       item.external_urls?.spotify ?? null,
     )
   })
+}
+
+export function getLatestSuccessfulSyncAt(kind: SyncKind): string | null {
+  const row = db
+    .prepare(`
+      SELECT completed_at AS completedAt
+      FROM sync_runs
+      WHERE kind = ? AND status = 'success'
+      ORDER BY id DESC
+      LIMIT 1
+    `)
+    .get(kind) as { completedAt?: string } | undefined
+  return row?.completedAt ?? null
 }
 
 function periodStart(period: string): string | null {
@@ -525,13 +589,13 @@ export function getTrends(): {
 
 export function getHealth(): Record<string, unknown> {
   const latest = db.prepare(`
-    SELECT started_at AS startedAt, completed_at AS completedAt,
+    SELECT kind, started_at AS startedAt, completed_at AS completedAt,
       status, imported_events AS importedEvents, message
     FROM sync_runs ORDER BY id DESC LIMIT 1
   `).get() as Record<string, unknown> | undefined
   const lastSuccess = db.prepare(`
     SELECT completed_at AS completedAt FROM sync_runs
-    WHERE status = 'success' ORDER BY id DESC LIMIT 1
+    WHERE kind = 'recent' AND status = 'success' ORDER BY id DESC LIMIT 1
   `).get() as { completedAt?: string } | undefined
   const counts = db.prepare(`
     SELECT
@@ -543,7 +607,13 @@ export function getHealth(): Record<string, unknown> {
   const ageHours = lastSuccess?.completedAt
     ? (Date.now() - new Date(lastSuccess.completedAt).getTime()) / 3_600_000
     : null
-  const risk = ageHours === null ? 'not-started' : ageHours > 72 ? 'elevated' : ageHours > 24 ? 'attention' : 'healthy'
+  const risk = ageHours === null
+    ? 'not-started'
+    : ageHours > 3
+      ? 'elevated'
+      : ageHours > 1
+        ? 'attention'
+        : 'healthy'
 
   return {
     connected: Boolean(getStoredToken()),
@@ -553,6 +623,7 @@ export function getHealth(): Record<string, unknown> {
     risk,
     counts,
     databasePath,
+    targetSyncIntervalMinutes: 15,
   }
 }
 
