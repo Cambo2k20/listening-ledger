@@ -21,6 +21,10 @@ import {
   updateDiscoveryFeedback,
 } from './discovery.ts'
 import {
+  isSpotifyDesktopUri,
+  openSpotifyDesktop,
+} from './lib/desktop.ts'
+import {
   completeAuthorization,
   createAuthorizationUrl,
   getGrantedSpotifyScopes,
@@ -121,6 +125,33 @@ app.get('/api/player/devices', async (_request, response) => {
   } catch (error) {
     response.status(externalErrorStatus(error)).json({
       error: error instanceof Error ? error.message : 'Device lookup failed.',
+    })
+  }
+})
+
+app.post('/api/player/open-desktop', async (request, response) => {
+  const spotifyUri = String(request.body?.spotifyUri ?? '')
+  if (!isSpotifyDesktopUri(spotifyUri)) {
+    response.status(400).json({
+      error: 'Only Spotify track, artist, or album links can be opened.',
+    })
+    return
+  }
+  if (process.platform !== 'win32') {
+    response.status(501).json({
+      error: 'Opening Spotify Desktop is currently supported only on Windows.',
+    })
+    return
+  }
+  try {
+    await openSpotifyDesktop(spotifyUri)
+    response.status(204).end()
+  } catch (error) {
+    response.status(500).json({
+      error:
+        error instanceof Error
+          ? `Spotify Desktop could not be opened: ${error.message}`
+          : 'Spotify Desktop could not be opened.',
     })
   }
 })

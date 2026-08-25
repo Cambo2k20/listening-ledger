@@ -46,9 +46,11 @@ can be imported from Spotify's Extended Streaming History later.
 1. Create a Spotify developer app named **Listening Ledger**.
 2. Add this exact redirect URI:
    `http://127.0.0.1:4317/auth/callback`
-3. Copy `.env.example` to `.env.local`.
-4. Paste the app's Client ID into `SPOTIFY_CLIENT_ID`.
-5. Paste the Last.fm API key into `LASTFM_API_KEY`.
+3. Under **APIs used**, enable **Web API** only. The Web Playback SDK and
+   Android SDK are not used.
+4. Copy `.env.example` to `.env.local`.
+5. Paste the app's Client ID into `SPOTIFY_CLIENT_ID`.
+6. Paste the Last.fm API key into `LASTFM_API_KEY`.
 
 No client secret is required or stored. PKCE keeps the app local and avoids
 placing a secret in browser code.
@@ -72,7 +74,10 @@ required for playback-control endpoints.
 The persistent player bar controls an available Spotify client, such as the
 Spotify desktop app. It does not embed or proxy Spotify audio. Track names and
 artwork start playback through Spotify Connect. Separate desktop and browser
-icons open each item in the installed Spotify app or Spotify Web Player.
+icons open each item in the installed Spotify app or Spotify Web Player. On
+Windows, the local API validates the Spotify URI and asks the operating system
+to open it, so the Desktop icon also works from embedded browsers that block
+custom `spotify:` links.
 
 To make Spotify Web Player appear in the device selector, open it, start a track
 once, and then refresh Listening Ledger's device list. Spotify only returns

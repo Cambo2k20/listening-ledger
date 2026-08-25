@@ -1,6 +1,7 @@
-import { Globe2, MonitorSpeaker, Play } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { Globe2, LoaderCircle, MonitorSpeaker, Play } from 'lucide-react'
+import { useState, type ReactNode } from 'react'
 import { useAppContext } from '../context'
+import { api } from '../lib/api'
 import { spotifyWebPlayerUrl } from '../lib/spotify'
 
 export function TrackPlayButton({
@@ -60,21 +61,50 @@ export function SpotifyDestinationLinks({
   label: string
   className?: string
 }) {
+  const [desktopLaunching, setDesktopLaunching] = useState(false)
+
+  const openDesktop = async () => {
+    if (desktopLaunching) return
+    setDesktopLaunching(true)
+    try {
+      await api<void>('/api/player/open-desktop', {
+        method: 'POST',
+        body: JSON.stringify({ spotifyUri }),
+      })
+    } catch (error) {
+      window.alert(
+        `${error instanceof Error ? error.message : 'Spotify Desktop could not be opened.'} Use the Web Player icon instead.`,
+      )
+    } finally {
+      setDesktopLaunching(false)
+    }
+  }
+
   return (
     <span className={`spotify-destination-links ${className}`.trim()}>
-      <a
+      <button
+        type="button"
         className="spotify-app-link"
-        href={spotifyUri}
+        onClick={(event) => {
+          event.stopPropagation()
+          void openDesktop()
+        }}
+        disabled={desktopLaunching}
         aria-label={`Open ${label} in Spotify Desktop`}
         title="Open in Spotify Desktop"
       >
-        <MonitorSpeaker size={13} />
-      </a>
+        {desktopLaunching ? (
+          <LoaderCircle size={13} className="spin" />
+        ) : (
+          <MonitorSpeaker size={13} />
+        )}
+      </button>
       <a
         className="spotify-app-link spotify-app-link--web"
         href={spotifyWebPlayerUrl(spotifyUri, spotifyUrl)}
         target="_blank"
         rel="noreferrer"
+        onClick={(event) => event.stopPropagation()}
         aria-label={`Open ${label} in Spotify Web Player`}
         title="Open in Spotify Web Player"
       >
