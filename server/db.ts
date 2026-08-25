@@ -512,6 +512,338 @@ function periodClause(period: string, alias = 'pe'): { sql: string; params: stri
     : { sql: '', params: [] }
 }
 
+export type DetailEntityType = 'track' | 'artist' | 'album'
+
+const detailPeriods = ['7d', '30d', '90d', 'all'] as const
+
+function detailEventCondition(
+  type: DetailEntityType,
+  alias = 'pe',
+): string {
+  if (type === 'track') return `${alias}.track_id = ?`
+  if (type === 'artist') {
+    return `EXISTS (
+      SELECT 1 FROM track_artists detail_ta
+      WHERE detail_ta.track_id = ${alias}.track_id
+        AND detail_ta.artist_id = ?
+        AND detail_ta.position = 0
+    )`
+  }
+  return `EXISTS (
+    SELECT 1 FROM tracks detail_t
+    WHERE detail_t.id = ${alias}.track_id AND detail_t.album_id = ?
+  )`
+}
+
+function detailEventFilter(
+  type: DetailEntityType,
+  id: string,
+  period = 'all',
+  alias = 'pe',
+): { sql: string; params: string[] } {
+  const start = periodStart(period)
+  return {
+    sql: `WHERE ${detailEventCondition(type, alias)}${start ? ` AND ${alias}.played_at >= ?` : ''}`,
+    params: start ? [id, start] : [id],
+  }
+}
+
+function getDetailEntity(
+  type: DetailEntityType,
+  id: string,
+): Record<string, unknown> | null {
+  if (type === 'track') {
+    const track = db.prepare(`
+      SELECT t.id, t.name, t.uri AS spotifyUri,
+        t.spotify_url AS spotifyUrl, t.duration_ms AS durationMs,
+        al.id AS albumId, al.name AS albumName, al.uri AS albumUri,
+        al.spotify_url AS albumSpotifyUrl, al.image_url AS imageUrl
+      FROM tracks t
+      LEFT JOIN albums al ON al.id = t.album_id
+      WHERE t.id = ?
+    `).get(id) as Record<string, unknown> | undefined
+    if (!track) return null
+    const artists = db.prepare(`
+      SELECT 'artist' AS type, ar.id, ar.name, ar.uri AS spotifyUri,
+        ar.spotify_url AS spotifyUrl, ta.position
+      FROM track_artists ta
+      JOIN artists ar ON ar.id = ta.artist_id
+      WHERE ta.track_id = ?
+      ORDER BY ta.position, ar.name
+    `).all(id)
+    return {
+      ...track,
+      artists,
+      album: track.albumId
+        ? {
+            type: 'album',
+            id: track.albumId,
+            name: track.albumName,
+            spotifyUri: track.albumUri,
+            spotifyUrl: track.albumSpotifyUrl,
+            imageUrl: track.imageUrl,
+          }
+        : null,
+    }
+  }
+
+  if (type === 'artist') {
+    const artist = db.prepare(`
+      SELECT ar.id, ar.name, ar.uri AS spotifyUri,
+        ar.spotify_url AS spotifyUrl,
+        (
+          SELECT al.image_url
+          FROM play_events image_pe
+          JOIN tracks image_t ON image_t.id = image_pe.track_id
+          JOIN albums al ON al.id = image_t.album_id
+          JOIN track_artists image_ta
+            ON image_ta.track_id = image_t.id AND image_ta.position = 0
+          WHERE image_ta.artist_id = ar.id AND al.image_url IS NOT NULL
+          GROUP BY al.id
+          ORDER BY COUNT(*) DESC, MAX(image_pe.played_at) DESC
+          LIMIT 1
+        ) AS imageUrl
+      FROM artists ar
+      WHERE ar.id = ?
+    `).get(id) as Record<string, unknown> | undefined
+    return artist ? { ...artist, artists: [], album: null } : null
+  }
+
+  const album = db.prepare(`
+    SELECT al.id, al.name, al.uri AS spotifyUri,
+      al.spotify_url AS spotifyUrl, al.image_url AS imageUrl
+    FROM albums al
+    WHERE al.id = ?
+  `).get(id) as Record<string, unknown> | undefined
+  if (!album) return null
+  const artists = db.prepare(`
+    SELECT 'artist' AS type, ar.id, ar.name, ar.uri AS spotifyUri,
+      ar.spotify_url AS spotifyUrl, MIN(ta.position) AS position
+    FROM tracks t
+    JOIN track_artists ta ON ta.track_id = t.id
+    JOIN artists ar ON ar.id = ta.artist_id
+    WHERE t.album_id = ?
+    GROUP BY ar.id
+    ORDER BY position, ar.name
+  `).all(id)
+  return { ...album, artists, album: null }
+}
+
+function getDetailRanking(
+  type: DetailEntityType,
+  id: string,
+  period: string,
+): { position: number | null; events: number } {
+  const filter = periodClause(period)
+  const grouping =
+    type === 'track'
+      ? { joins: '', expression: 'pe.track_id' }
+      : type === 'artist'
+        ? {
+            joins:
+              'JOIN track_artists ranking_ta ON ranking_ta.track_id = pe.track_id AND ranking_ta.position = 0',
+            expression: 'ranking_ta.artist_id',
+          }
+        : {
+            joins: 'JOIN tracks ranking_t ON ranking_t.id = pe.track_id',
+            expression: 'ranking_t.album_id',
+          }
+  const row = db.prepare(`
+    WITH grouped AS (
+      SELECT ${grouping.expression} AS entityId,
+        COUNT(*) AS events, MAX(pe.played_at) AS lastPlayed
+      FROM play_events pe
+      ${grouping.joins}
+      ${filter.sql}
+      GROUP BY ${grouping.expression}
+    ), ranked AS (
+      SELECT entityId, events,
+        ROW_NUMBER() OVER (
+          ORDER BY events DESC, lastPlayed DESC, entityId
+        ) AS position
+      FROM grouped
+      WHERE entityId IS NOT NULL
+    )
+    SELECT position, events FROM ranked WHERE entityId = ?
+  `).get(...filter.params, id) as
+    | { position: number; events: number }
+    | undefined
+  return row ?? { position: null, events: 0 }
+}
+
+function getDetailRelated(
+  type: DetailEntityType,
+  id: string,
+  entity: Record<string, unknown>,
+): Array<Record<string, unknown>> {
+  if (type === 'track') {
+    const artists = db.prepare(`
+      SELECT 'artist' AS type, ar.id, ar.name, ar.uri AS spotifyUri,
+        ar.spotify_url AS spotifyUrl,
+        CASE WHEN ta.position = 0 THEN 'Primary artist' ELSE 'Contributing artist' END AS detail
+      FROM track_artists ta
+      JOIN artists ar ON ar.id = ta.artist_id
+      WHERE ta.track_id = ?
+      ORDER BY ta.position, ar.name
+    `).all(id)
+    const album = entity.album as Record<string, unknown> | null
+    const connected = album
+      ? [...artists, { ...album, detail: 'Album' }]
+      : artists
+    const moreFromAlbum = entity.albumId
+      ? db.prepare(`
+          SELECT 'track' AS type, t.id, t.name, t.uri AS spotifyUri,
+            t.spotify_url AS spotifyUrl, al.image_url AS imageUrl,
+            COUNT(pe.id) AS events, 'Track on this album' AS detail
+          FROM tracks t
+          JOIN albums al ON al.id = t.album_id
+          LEFT JOIN play_events pe ON pe.track_id = t.id
+          WHERE t.album_id = ? AND t.id != ?
+          GROUP BY t.id
+          ORDER BY events DESC, t.name
+          LIMIT 8
+        `).all(String(entity.albumId), id)
+      : []
+    return [
+      { title: 'Artists and album', items: connected },
+      { title: 'More from this album', items: moreFromAlbum },
+    ]
+  }
+
+  if (type === 'artist') {
+    const topTracks = db.prepare(`
+      SELECT 'track' AS type, t.id, t.name, t.uri AS spotifyUri,
+        t.spotify_url AS spotifyUrl, al.image_url AS imageUrl,
+        al.name AS detail, COUNT(pe.id) AS events
+      FROM track_artists ta
+      JOIN tracks t ON t.id = ta.track_id
+      LEFT JOIN albums al ON al.id = t.album_id
+      LEFT JOIN play_events pe ON pe.track_id = t.id
+      WHERE ta.artist_id = ? AND ta.position = 0
+      GROUP BY t.id
+      ORDER BY events DESC, MAX(pe.played_at) DESC, t.name
+      LIMIT 8
+    `).all(id)
+    const topAlbums = db.prepare(`
+      SELECT 'album' AS type, al.id, al.name, al.uri AS spotifyUri,
+        al.spotify_url AS spotifyUrl, al.image_url AS imageUrl,
+        'Album' AS detail, COUNT(pe.id) AS events
+      FROM track_artists ta
+      JOIN tracks t ON t.id = ta.track_id
+      JOIN albums al ON al.id = t.album_id
+      LEFT JOIN play_events pe ON pe.track_id = t.id
+      WHERE ta.artist_id = ? AND ta.position = 0
+      GROUP BY al.id
+      ORDER BY events DESC, MAX(pe.played_at) DESC, al.name
+      LIMIT 8
+    `).all(id)
+    return [
+      { title: 'Top tracks', items: topTracks },
+      { title: 'Top albums', items: topAlbums },
+    ]
+  }
+
+  const artists = db.prepare(`
+    SELECT 'artist' AS type, ar.id, ar.name, ar.uri AS spotifyUri,
+      ar.spotify_url AS spotifyUrl,
+      CASE WHEN MIN(ta.position) = 0 THEN 'Primary artist' ELSE 'Contributing artist' END AS detail
+    FROM tracks t
+    JOIN track_artists ta ON ta.track_id = t.id
+    JOIN artists ar ON ar.id = ta.artist_id
+    WHERE t.album_id = ?
+    GROUP BY ar.id
+    ORDER BY MIN(ta.position), ar.name
+  `).all(id)
+  const tracks = db.prepare(`
+    SELECT 'track' AS type, t.id, t.name, t.uri AS spotifyUri,
+      t.spotify_url AS spotifyUrl, al.image_url AS imageUrl,
+      'Track on this album' AS detail, COUNT(pe.id) AS events
+    FROM tracks t
+    JOIN albums al ON al.id = t.album_id
+    LEFT JOIN play_events pe ON pe.track_id = t.id
+    WHERE t.album_id = ?
+    GROUP BY t.id
+    ORDER BY events DESC, MAX(pe.played_at) DESC, t.name
+  `).all(id)
+  return [
+    { title: 'Artists', items: artists },
+    { title: 'Tracks', items: tracks },
+  ]
+}
+
+export function getEntityDetail(
+  type: DetailEntityType,
+  id: string,
+  period = '30d',
+): Record<string, unknown> | null {
+  const entity = getDetailEntity(type, id)
+  if (!entity) return null
+
+  const selectedFilter = detailEventFilter(type, id, period)
+  const allFilter = detailEventFilter(type, id)
+  const selected = db.prepare(`
+    SELECT COUNT(*) AS events,
+      COUNT(DISTINCT date(pe.played_at)) AS activeDays
+    FROM play_events pe
+    ${selectedFilter.sql}
+  `).get(...selectedFilter.params) as { events: number; activeDays: number }
+  const coverage = db.prepare(`
+    SELECT MIN(pe.played_at) AS firstPlayed,
+      MAX(pe.played_at) AS lastPlayed
+    FROM play_events pe
+    ${allFilter.sql}
+  `).get(...allFilter.params) as {
+    firstPlayed: string | null
+    lastPlayed: string | null
+  }
+
+  const bucketKind = period === 'all' ? 'month' : period === '90d' ? 'week' : 'day'
+  const bucketExpression =
+    bucketKind === 'month'
+      ? "substr(pe.played_at, 1, 7)"
+      : bucketKind === 'week'
+        ? "date(pe.played_at, printf('-%d days', (CAST(strftime('%w', pe.played_at) AS INTEGER) + 6) % 7))"
+        : 'date(pe.played_at)'
+  const timeline = db.prepare(`
+    SELECT ${bucketExpression} AS bucket, COUNT(*) AS events
+    FROM play_events pe
+    ${selectedFilter.sql}
+    GROUP BY bucket
+    ORDER BY bucket
+  `).all(...selectedFilter.params)
+
+  const recentEvents = db.prepare(`
+    SELECT pe.id, pe.played_at AS playedAt,
+      t.id AS trackId, t.name AS trackName, t.uri AS spotifyUri,
+      al.id AS albumId, al.name AS albumName, al.image_url AS imageUrl,
+      GROUP_CONCAT(ar.name, ', ') AS artists,
+      MAX(CASE WHEN ta.position = 0 THEN ar.id END) AS primaryArtistId
+    FROM play_events pe
+    JOIN tracks t ON t.id = pe.track_id
+    LEFT JOIN albums al ON al.id = t.album_id
+    LEFT JOIN track_artists ta ON ta.track_id = t.id
+    LEFT JOIN artists ar ON ar.id = ta.artist_id
+    ${allFilter.sql}
+    GROUP BY pe.id
+    ORDER BY pe.played_at DESC
+    LIMIT 12
+  `).all(...allFilter.params)
+
+  return {
+    type,
+    period,
+    entity,
+    summary: { ...selected, ...coverage },
+    timeline: { bucketKind, items: timeline },
+    rankings: detailPeriods.map((rankingPeriod) => ({
+      period: rankingPeriod,
+      ...getDetailRanking(type, id, rankingPeriod),
+    })),
+    related: getDetailRelated(type, id, entity),
+    recentEvents,
+  }
+}
+
 export function getDashboard(period = '30d'): Record<string, unknown> {
   const filter = periodClause(period)
   const total = db
@@ -529,7 +861,9 @@ export function getDashboard(period = '30d'): Record<string, unknown> {
 
   const topTracks = db.prepare(`
     SELECT t.id, t.name, t.uri AS spotifyUri, t.spotify_url AS spotifyUrl,
-      al.name AS albumName, al.uri AS albumUri, al.image_url AS imageUrl,
+      al.id AS albumId, al.name AS albumName, al.uri AS albumUri,
+      al.image_url AS imageUrl,
+      MAX(CASE WHEN ta.position = 0 THEN ar.id END) AS primaryArtistId,
       GROUP_CONCAT(DISTINCT ar.name) AS artists,
       COUNT(*) AS events
     FROM play_events pe
@@ -631,7 +965,9 @@ export function getRankings(
   }
   return db.prepare(`
     SELECT t.id, t.name, t.uri AS spotifyUri, t.spotify_url AS spotifyUrl,
-      al.name AS albumName, al.uri AS albumUri, al.image_url AS imageUrl,
+      al.id AS albumId, al.name AS albumName, al.uri AS albumUri,
+      al.image_url AS imageUrl,
+      MAX(CASE WHEN ta.position = 0 THEN ar.id END) AS primaryArtistId,
       GROUP_CONCAT(DISTINCT ar.name) AS artists,
       COUNT(*) AS events, MAX(pe.played_at) AS lastPlayed
     FROM play_events pe

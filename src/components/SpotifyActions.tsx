@@ -1,3 +1,4 @@
+import { MonitorSpeaker } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { api } from '../lib/api'
 
@@ -55,6 +56,48 @@ export function SpotifyDesktopTextLink({
       title="Open in Spotify Desktop"
     >
       {children}
+    </button>
+  )
+}
+
+export function SpotifyDesktopIconButton({
+  spotifyUri,
+  label,
+}: {
+  spotifyUri: string
+  label: string
+}) {
+  return (
+    <SpotifyDesktopTextLink
+      spotifyUri={spotifyUri}
+      label={label}
+      className="spotify-icon-action"
+    >
+      <MonitorSpeaker size={14} aria-hidden="true" />
+    </SpotifyDesktopTextLink>
+  )
+}
+
+export function SpotifyDesktopButton({
+  spotifyUri,
+  label,
+}: {
+  spotifyUri: string
+  label: string
+}) {
+  const { desktopLaunching, openDesktop } =
+    useSpotifyDesktopLauncher(spotifyUri)
+
+  return (
+    <button
+      type="button"
+      className="button button--primary"
+      onClick={() => void openDesktop()}
+      disabled={desktopLaunching}
+      aria-busy={desktopLaunching}
+    >
+      <MonitorSpeaker size={16} />
+      {desktopLaunching ? 'Opening Spotify…' : `Open ${label} in Spotify`}
     </button>
   )
 }

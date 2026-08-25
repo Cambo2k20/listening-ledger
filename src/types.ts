@@ -115,6 +115,8 @@ export interface DashboardData {
     id: string
     name: string
     artists: string
+    primaryArtistId?: string
+    albumId?: string
     albumName?: string
     albumUri?: string
     imageUrl?: string
@@ -149,6 +151,8 @@ export interface RankingItem {
   id: string
   name: string
   artists?: string
+  primaryArtistId?: string
+  albumId?: string
   albumName?: string
   albumUri?: string
   imageUrl?: string
@@ -156,6 +160,67 @@ export interface RankingItem {
   spotifyUrl?: string
   events: number
   lastPlayed?: string
+}
+
+export type DetailEntityType = 'track' | 'artist' | 'album'
+export type DetailPeriod = '7d' | '30d' | '90d' | 'all'
+
+export interface DetailReference {
+  type: DetailEntityType
+  id: string
+  name: string
+  spotifyUri: string
+  spotifyUrl?: string
+  imageUrl?: string
+  detail?: string
+  events?: number
+  position?: number
+}
+
+export interface EntityDetailData {
+  type: DetailEntityType
+  period: DetailPeriod
+  entity: {
+    id: string
+    name: string
+    spotifyUri: string
+    spotifyUrl?: string
+    imageUrl?: string
+    durationMs?: number
+    artists: Array<DetailReference & { position: number }>
+    album: DetailReference | null
+  }
+  summary: {
+    events: number
+    activeDays: number
+    firstPlayed: string | null
+    lastPlayed: string | null
+  }
+  timeline: {
+    bucketKind: 'day' | 'week' | 'month'
+    items: Array<{ bucket: string; events: number }>
+  }
+  rankings: Array<{
+    period: DetailPeriod
+    position: number | null
+    events: number
+  }>
+  related: Array<{
+    title: string
+    items: DetailReference[]
+  }>
+  recentEvents: Array<{
+    id: number
+    playedAt: string
+    trackId: string
+    trackName: string
+    spotifyUri: string
+    albumId?: string
+    albumName?: string
+    imageUrl?: string
+    artists: string
+    primaryArtistId?: string
+  }>
 }
 
 export interface TrendInsight {

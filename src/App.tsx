@@ -7,6 +7,7 @@ import Shell from './components/Shell'
 import DashboardScreen from './screens/DashboardScreen'
 import DataHealthScreen from './screens/DataHealthScreen'
 import DiscoverScreen from './screens/DiscoverScreen'
+import EntityDetailScreen from './screens/EntityDetailScreen'
 import HistoryScreen from './screens/HistoryScreen'
 import RankingsScreen from './screens/RankingsScreen'
 import SettingsScreen from './screens/SettingsScreen'
@@ -282,6 +283,9 @@ export default function App() {
           <Route index element={<DashboardScreen />} />
           <Route path="history" element={<HistoryScreen />} />
           <Route path="rankings" element={<RankingsScreen />} />
+          <Route path="tracks/:id" element={<EntityDetailScreen type="track" />} />
+          <Route path="artists/:id" element={<EntityDetailScreen type="artist" />} />
+          <Route path="albums/:id" element={<EntityDetailScreen type="album" />} />
           <Route path="trends" element={<TrendsScreen />} />
           <Route path="discover" element={<DiscoverScreen />} />
           <Route path="health" element={<DataHealthScreen />} />

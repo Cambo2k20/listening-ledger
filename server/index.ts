@@ -6,12 +6,14 @@ import {
   clearAuthentication,
   getAccount,
   getDashboard,
+  getEntityDetail,
   getExportData,
   getHealth,
   getHistory,
   getRankings,
   getStoredToken,
   getTrends,
+  type DetailEntityType,
 } from './db.ts'
 import {
   generateDiscoverySession,
@@ -88,6 +90,29 @@ app.get('/api/rankings', (request, response) => {
     period: String(request.query.period ?? '30d'),
     items: getRankings(type, String(request.query.period ?? '30d')),
   })
+})
+
+app.get('/api/details/:type/:id', (request, response) => {
+  const requestedType = String(request.params.type)
+  if (!['track', 'artist', 'album'].includes(requestedType)) {
+    response.status(400).json({ error: 'Unknown detail type.' })
+    return
+  }
+  const id = String(request.params.id).trim()
+  if (!id) {
+    response.status(400).json({ error: 'A Spotify entity ID is required.' })
+    return
+  }
+  const requestedPeriod = String(request.query.period ?? '30d')
+  const period = ['7d', '30d', '90d', 'all'].includes(requestedPeriod)
+    ? requestedPeriod
+    : '30d'
+  const detail = getEntityDetail(requestedType as DetailEntityType, id, period)
+  if (!detail) {
+    response.status(404).json({ error: 'This ledger item was not found.' })
+    return
+  }
+  response.json(detail)
 })
 
 app.get('/api/trends', (_request, response) => {

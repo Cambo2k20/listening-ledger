@@ -19,7 +19,8 @@ import {
   Panel,
   Skeleton,
 } from '../components/Ui'
-import { SpotifyDesktopTextLink } from '../components/SpotifyActions'
+import { SpotifyDesktopIconButton } from '../components/SpotifyActions'
+import { detailPath } from '../lib/routes'
 
 const periods = [
   { value: '7d', label: '7 days' },
@@ -177,10 +178,10 @@ export default function DashboardScreen() {
               {data.topTracks.map((track, index) => (
                 <li key={track.id}>
                   <span className="rank-number">{index + 1}</span>
-                  <SpotifyDesktopTextLink
-                    spotifyUri={track.spotifyUri}
-                    label={track.name}
-                    className="spotify-desktop-art-link"
+                  <Link
+                    to={detailPath('track', track.id)}
+                    className="ledger-art-link"
+                    aria-label={`Open ${track.name} track detail`}
                   >
                     {track.imageUrl ? (
                       <img src={track.imageUrl} alt="" />
@@ -189,37 +190,41 @@ export default function DashboardScreen() {
                         <Disc3 size={18} />
                       </span>
                     )}
-                  </SpotifyDesktopTextLink>
+                  </Link>
                   <div>
-                    <SpotifyDesktopTextLink
-                      spotifyUri={track.spotifyUri}
-                      label={track.name}
+                    <Link
+                      to={detailPath('track', track.id)}
+                      className="ledger-name-link"
                     >
                       {track.name}
-                    </SpotifyDesktopTextLink>
+                    </Link>
                     <span className="overview-track-meta">
-                      <SpotifyDesktopTextLink
-                        spotifyUri={track.spotifyUri}
-                        label={`${track.name} by ${track.artists}`}
-                        className="spotify-desktop-text-link--meta"
-                      >
-                        {track.artists}
-                      </SpotifyDesktopTextLink>
+                      {track.primaryArtistId ? (
+                        <Link to={detailPath('artist', track.primaryArtistId)}>
+                          {track.artists}
+                        </Link>
+                      ) : (
+                        <span>{track.artists}</span>
+                      )}
                       {track.albumName && (
                         <>
                           <i aria-hidden="true">·</i>
-                          <SpotifyDesktopTextLink
-                            spotifyUri={track.albumUri ?? track.spotifyUri}
-                            label={track.albumName}
-                            className="spotify-desktop-text-link--meta"
-                          >
-                            {track.albumName}
-                          </SpotifyDesktopTextLink>
+                          {track.albumId ? (
+                            <Link to={detailPath('album', track.albumId)}>
+                              {track.albumName}
+                            </Link>
+                          ) : (
+                            <span>{track.albumName}</span>
+                          )}
                         </>
                       )}
                     </span>
                   </div>
                   <strong>{track.events}</strong>
+                  <SpotifyDesktopIconButton
+                    spotifyUri={track.spotifyUri}
+                    label={track.name}
+                  />
                 </li>
               ))}
             </ol>
@@ -242,14 +247,17 @@ export default function DashboardScreen() {
                 <li key={artist.id}>
                   <div>
                     <span>{index + 1}</span>
-                    <SpotifyDesktopTextLink
-                      spotifyUri={artist.spotifyUri}
-                      label={artist.name}
-                      className="spotify-name-link"
+                    <Link
+                      to={detailPath('artist', artist.id)}
+                      className="ledger-name-link"
                     >
                       {artist.name}
-                    </SpotifyDesktopTextLink>
+                    </Link>
                     <strong>{artist.events}</strong>
+                    <SpotifyDesktopIconButton
+                      spotifyUri={artist.spotifyUri}
+                      label={artist.name}
+                    />
                   </div>
                   <i>
                     <span

@@ -12,7 +12,7 @@ import {
   Settings,
   X,
 } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useAppContext } from '../context'
 import PlayerBar from './PlayerBar'
@@ -42,6 +42,18 @@ export default function Shell() {
   const [open, setOpen] = useState(false)
   const location = useLocation()
   const { status, syncing, syncMessage, syncNow } = useAppContext()
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0 })
+  }, [location.pathname])
+
+  const pageName = location.pathname.startsWith('/tracks/')
+    ? 'Track detail'
+    : location.pathname.startsWith('/artists/')
+      ? 'Artist detail'
+      : location.pathname.startsWith('/albums/')
+        ? 'Album detail'
+        : pageNames[location.pathname] ?? 'Listening Ledger'
 
   return (
     <div className="app-shell">
@@ -114,7 +126,7 @@ export default function Shell() {
             </button>
             <div>
               <small>Listening Ledger</small>
-              <strong>{pageNames[location.pathname] ?? 'Listening Ledger'}</strong>
+              <strong>{pageName}</strong>
             </div>
           </div>
 

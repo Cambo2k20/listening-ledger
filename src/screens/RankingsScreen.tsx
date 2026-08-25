@@ -1,10 +1,12 @@
 import { Disc3 } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { EmptyState, PageIntro, Panel, Skeleton } from '../components/Ui'
 import { api } from '../lib/api'
 import { formatDateTime } from '../lib/format'
 import type { RankingItem } from '../types'
-import { SpotifyDesktopTextLink } from '../components/SpotifyActions'
+import { SpotifyDesktopIconButton } from '../components/SpotifyActions'
+import { detailPath } from '../lib/routes'
 
 const types = ['track', 'artist', 'album'] as const
 const periods = [
@@ -76,10 +78,10 @@ export default function RankingsScreen() {
                 <span className="ranking-position">
                   {String(index + 1).padStart(2, '0')}
                 </span>
-                <SpotifyDesktopTextLink
-                  spotifyUri={item.spotifyUri}
-                  label={item.name}
-                  className="spotify-desktop-art-link"
+                <Link
+                  to={detailPath(type, item.id)}
+                  className="ledger-art-link"
+                  aria-label={`Open ${item.name} ${type} detail`}
                 >
                   {item.imageUrl ? (
                     <img src={item.imageUrl} alt="" />
@@ -88,36 +90,33 @@ export default function RankingsScreen() {
                       <Disc3 size={20} />
                     </span>
                   )}
-                </SpotifyDesktopTextLink>
+                </Link>
                 <div className="ranking-name">
-                  <SpotifyDesktopTextLink
-                    spotifyUri={item.spotifyUri}
-                    label={item.name}
-                    className="spotify-name-link"
+                  <Link
+                    to={detailPath(type, item.id)}
+                    className="ledger-name-link"
                   >
                     {item.name}
-                  </SpotifyDesktopTextLink>
+                  </Link>
                   {(item.artists || item.albumName) && (
                     <span className="ranking-detail-links">
-                      {item.artists && (
-                        <SpotifyDesktopTextLink
-                          spotifyUri={item.spotifyUri}
-                          label={`${item.name} by ${item.artists}`}
-                          className="spotify-desktop-text-link--meta"
-                        >
+                      {item.artists && item.primaryArtistId ? (
+                        <Link to={detailPath('artist', item.primaryArtistId)}>
                           {item.artists}
-                        </SpotifyDesktopTextLink>
-                      )}
+                        </Link>
+                      ) : item.artists ? (
+                        <span>{item.artists}</span>
+                      ) : null}
                       {type === 'track' && item.albumName && (
                         <>
                           <i aria-hidden="true">·</i>
-                          <SpotifyDesktopTextLink
-                            spotifyUri={item.albumUri ?? item.spotifyUri}
-                            label={item.albumName}
-                            className="spotify-desktop-text-link--meta"
-                          >
-                            {item.albumName}
-                          </SpotifyDesktopTextLink>
+                          {item.albumId ? (
+                            <Link to={detailPath('album', item.albumId)}>
+                              {item.albumName}
+                            </Link>
+                          ) : (
+                            <span>{item.albumName}</span>
+                          )}
                         </>
                       )}
                     </span>
@@ -128,6 +127,10 @@ export default function RankingsScreen() {
                 </span>
                 <strong>{item.events}</strong>
                 <small className="ranking-unit">events</small>
+                <SpotifyDesktopIconButton
+                  spotifyUri={item.spotifyUri}
+                  label={item.name}
+                />
               </li>
             ))}
           </ol>
