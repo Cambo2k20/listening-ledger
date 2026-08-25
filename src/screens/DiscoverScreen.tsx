@@ -25,7 +25,7 @@ import type {
   DiscoveryStatus,
 } from '../types'
 import {
-  SpotifyAppLink,
+  SpotifyDestinationLinks,
   TrackPlayButton,
   TrackPlayIcon,
 } from '../components/SpotifyActions'
@@ -424,9 +424,10 @@ export default function DiscoverScreen() {
                         <TrackPlayButton spotifyUri={candidate.spotifyUri}>
                           {candidate.trackName}
                         </TrackPlayButton>
-                        <SpotifyAppLink
+                        <SpotifyDestinationLinks
                           spotifyUri={candidate.spotifyUri}
-                          label={`Open ${candidate.trackName} in Spotify Desktop`}
+                          spotifyUrl={candidate.spotifyUrl}
+                          label={candidate.trackName}
                         />
                       </span>
                       <small>{candidate.artistName} · {candidate.albumName}</small>

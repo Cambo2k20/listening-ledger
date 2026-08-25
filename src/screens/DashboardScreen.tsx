@@ -20,7 +20,7 @@ import {
   Skeleton,
 } from '../components/Ui'
 import {
-  SpotifyAppLink,
+  SpotifyDestinationLinks,
   TrackPlayButton,
 } from '../components/SpotifyActions'
 
@@ -192,9 +192,10 @@ export default function DashboardScreen() {
                       <TrackPlayButton spotifyUri={track.spotifyUri}>
                         {track.name}
                       </TrackPlayButton>
-                      <SpotifyAppLink
+                      <SpotifyDestinationLinks
                         spotifyUri={track.spotifyUri}
-                        label={`Open ${track.name} in Spotify Desktop`}
+                        spotifyUrl={track.spotifyUrl}
+                        label={track.name}
                       />
                     </span>
                     <small>{track.artists}</small>
@@ -222,13 +223,14 @@ export default function DashboardScreen() {
                 <li key={artist.id}>
                   <div>
                     <span>{index + 1}</span>
-                    <SpotifyAppLink
-                      spotifyUri={artist.spotifyUri}
-                      label={`Open ${artist.name} in Spotify Desktop`}
-                      className="spotify-name-link"
-                    >
-                      {artist.name}
-                    </SpotifyAppLink>
+                    <span className="spotify-name-actions">
+                      <span className="spotify-name-link">{artist.name}</span>
+                      <SpotifyDestinationLinks
+                        spotifyUri={artist.spotifyUri}
+                        spotifyUrl={artist.spotifyUrl}
+                        label={artist.name}
+                      />
+                    </span>
                     <strong>{artist.events}</strong>
                   </div>
                   <i>

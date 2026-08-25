@@ -1,6 +1,7 @@
-import { Play, Radio } from 'lucide-react'
+import { Globe2, MonitorSpeaker, Play } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useAppContext } from '../context'
+import { spotifyWebPlayerUrl } from '../lib/spotify'
 
 export function TrackPlayButton({
   spotifyUri,
@@ -48,25 +49,37 @@ export function TrackPlayIcon({
   )
 }
 
-export function SpotifyAppLink({
+export function SpotifyDestinationLinks({
   spotifyUri,
+  spotifyUrl,
   label,
   className = '',
-  children,
 }: {
   spotifyUri: string
+  spotifyUrl?: string
   label: string
   className?: string
-  children?: ReactNode
 }) {
   return (
-    <a
-      className={`spotify-app-link ${className}`.trim()}
-      href={spotifyUri}
-      aria-label={label}
-      title={label}
-    >
-      {children ?? <Radio size={13} />}
-    </a>
+    <span className={`spotify-destination-links ${className}`.trim()}>
+      <a
+        className="spotify-app-link"
+        href={spotifyUri}
+        aria-label={`Open ${label} in Spotify Desktop`}
+        title="Open in Spotify Desktop"
+      >
+        <MonitorSpeaker size={13} />
+      </a>
+      <a
+        className="spotify-app-link spotify-app-link--web"
+        href={spotifyWebPlayerUrl(spotifyUri, spotifyUrl)}
+        target="_blank"
+        rel="noreferrer"
+        aria-label={`Open ${label} in Spotify Web Player`}
+        title="Open in Spotify Web Player"
+      >
+        <Globe2 size={13} />
+      </a>
+    </span>
   )
 }

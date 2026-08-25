@@ -71,8 +71,12 @@ required for playback-control endpoints.
 
 The persistent player bar controls an available Spotify client, such as the
 Spotify desktop app. It does not embed or proxy Spotify audio. Track names and
-artwork start playback through Spotify Connect; the separate Spotify icon opens
-the track URI in the installed Spotify app.
+artwork start playback through Spotify Connect. Separate desktop and browser
+icons open each item in the installed Spotify app or Spotify Web Player.
+
+To make Spotify Web Player appear in the device selector, open it, start a track
+once, and then refresh Listening Ledger's device list. Spotify only returns
+clients it currently considers available Spotify Connect devices.
 
 Listening Ledger refreshes playback state every 10 seconds while the browser tab
 is visible and animates elapsed time locally between refreshes. This keeps the

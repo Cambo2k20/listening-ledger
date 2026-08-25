@@ -5,7 +5,7 @@ import { api } from '../lib/api'
 import { formatDateTime } from '../lib/format'
 import type { RankingItem } from '../types'
 import {
-  SpotifyAppLink,
+  SpotifyDestinationLinks,
   TrackPlayButton,
 } from '../components/SpotifyActions'
 
@@ -92,19 +92,21 @@ export default function RankingsScreen() {
                       <TrackPlayButton spotifyUri={item.spotifyUri}>
                         {item.name}
                       </TrackPlayButton>
-                      <SpotifyAppLink
+                      <SpotifyDestinationLinks
                         spotifyUri={item.spotifyUri}
-                        label={`Open ${item.name} in Spotify Desktop`}
+                        spotifyUrl={item.spotifyUrl}
+                        label={item.name}
                       />
                     </span>
                   ) : (
-                    <SpotifyAppLink
-                      spotifyUri={item.spotifyUri}
-                      label={`Open ${item.name} in Spotify Desktop`}
-                      className="spotify-name-link"
-                    >
-                      {item.name}
-                    </SpotifyAppLink>
+                    <span className="spotify-name-actions">
+                      <span className="spotify-name-link">{item.name}</span>
+                      <SpotifyDestinationLinks
+                        spotifyUri={item.spotifyUri}
+                        spotifyUrl={item.spotifyUrl}
+                        label={item.name}
+                      />
+                    </span>
                   )}
                   <small>{item.artists || item.albumName || 'Primary artist'}</small>
                 </div>

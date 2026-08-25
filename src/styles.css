@@ -863,13 +863,36 @@ select:focus-visible {
   color: var(--faint);
 }
 
+.spotify-destination-links,
+.spotify-name-actions {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.spotify-destination-links {
+  flex: 0 0 auto;
+  gap: 5px;
+}
+
+.spotify-name-actions {
+  gap: 7px;
+}
+
 .spotify-app-link:hover {
   color: var(--lime);
 }
 
+.spotify-app-link--web {
+  color: var(--muted);
+}
+
 .spotify-name-link {
   display: block;
+  min-width: 0;
   overflow: hidden;
+  color: var(--text);
+  font-size: 0.7rem;
   font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -935,6 +958,11 @@ select:focus-visible {
   font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.artist-bars .spotify-name-link {
+  color: var(--text);
+  font-size: 0.7rem;
 }
 
 .artist-bars li > i {
@@ -2239,7 +2267,7 @@ code {
 
 .player-track {
   display: grid;
-  grid-template-columns: 52px minmax(0, 1fr) 28px;
+  grid-template-columns: 52px minmax(0, 1fr) 36px;
   align-items: center;
   gap: 10px;
   min-width: 0;
@@ -2286,7 +2314,6 @@ code {
   font-size: 0.57rem;
 }
 
-.player-open-spotify,
 .player-refresh,
 .player-controls button {
   display: grid;
@@ -2298,10 +2325,13 @@ code {
   cursor: pointer;
 }
 
-.player-open-spotify:hover,
 .player-refresh:hover,
 .player-controls button:hover:not(:disabled) {
   color: var(--lime);
+}
+
+.player-destination-links {
+  justify-content: flex-end;
 }
 
 .player-centre {
@@ -2802,7 +2832,7 @@ code {
   }
 
   .player-track {
-    grid-template-columns: 42px minmax(0, 1fr) 24px;
+    grid-template-columns: 42px minmax(0, 1fr) 34px;
     gap: 8px;
   }
 

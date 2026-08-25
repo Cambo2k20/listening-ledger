@@ -1,6 +1,5 @@
 import {
   Disc3,
-  ExternalLink,
   LoaderCircle,
   MonitorSpeaker,
   Pause,
@@ -14,6 +13,7 @@ import {
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAppContext } from '../context'
+import { SpotifyDestinationLinks } from './SpotifyActions'
 
 function formatDuration(value: number): string {
   const totalSeconds = Math.max(0, Math.floor(value / 1000))
@@ -127,17 +127,15 @@ export default function PlayerBar() {
               <small>
                 {player?.track
                   ? `${player.track.artistName}${player.track.albumName ? ` · ${player.track.albumName}` : ''}`
-                  : 'Open Spotify Desktop or play any track in the ledger.'}
+                  : 'Start Spotify Desktop or the Web Player, then refresh devices.'}
               </small>
             </div>
-            <a
-              className="player-open-spotify"
-              href={player?.track?.spotifyUri ?? 'spotify:'}
-              aria-label="Open in Spotify Desktop"
-              title="Open in Spotify Desktop"
-            >
-              <ExternalLink size={15} />
-            </a>
+            <SpotifyDestinationLinks
+              spotifyUri={player?.track?.spotifyUri ?? 'spotify:'}
+              spotifyUrl={player?.track?.spotifyUrl}
+              label={player?.track?.trackName ?? 'Spotify'}
+              className="player-destination-links"
+            />
           </div>
 
           <div className="player-centre">

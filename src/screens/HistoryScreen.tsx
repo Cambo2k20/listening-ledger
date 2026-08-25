@@ -5,7 +5,7 @@ import { api } from '../lib/api'
 import { formatDateTime } from '../lib/format'
 import type { HistoryItem } from '../types'
 import {
-  SpotifyAppLink,
+  SpotifyDestinationLinks,
   TrackPlayButton,
 } from '../components/SpotifyActions'
 
@@ -66,9 +66,10 @@ export default function HistoryScreen() {
                     <TrackPlayButton spotifyUri={item.spotifyUri}>
                       {item.trackName}
                     </TrackPlayButton>
-                    <SpotifyAppLink
+                    <SpotifyDestinationLinks
                       spotifyUri={item.spotifyUri}
-                      label={`Open ${item.trackName} in Spotify Desktop`}
+                      spotifyUrl={item.spotifyUrl}
+                      label={item.trackName}
                     />
                   </span>
                   <small>{item.artists}</small>
