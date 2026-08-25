@@ -17,12 +17,23 @@ import {
 import { deduplicatePlaybackEvents } from './lib/dedup.ts'
 import { normalizeDiscoveryText } from './lib/discovery-ranking.ts'
 import {
+  clampPlaybackPosition,
+  clampVolumePercent,
+  isSpotifyTrackUri,
+  mapSpotifyDevice,
+  mapSpotifyPlaybackState,
+  type RawSpotifyDevice,
+  type RawSpotifyPlaybackState,
+} from './lib/player.ts'
+import {
   isDailyTopSyncDue,
   SPOTIFY_SYNC_LOCK,
   SYNC_LOCK_TTL_MS,
 } from './lib/sync-schedule.ts'
 import type {
   DiscoverySeed,
+  SpotifyPlaybackDevice,
+  SpotifyPlaybackState,
   SpotifyPlayHistoryItem,
   SpotifyTrack,
   SpotifyTokenResponse,
@@ -34,6 +45,8 @@ export const SPOTIFY_SCOPES = [
   'user-top-read',
   'user-library-read',
   'playlist-modify-private',
+  'user-read-playback-state',
+  'user-modify-playback-state',
 ] as const
 const pendingAuthorizations = new Map<
   string,
@@ -367,6 +380,111 @@ export async function createPrivateSpotifyPlaylist(
     name: playlist.name,
     url: playlist.external_urls?.spotify,
   }
+}
+
+export async function getSpotifyPlaybackState(): Promise<SpotifyPlaybackState> {
+  requireSpotifyScopes(['user-read-playback-state'])
+  const state = await spotifyRequest<RawSpotifyPlaybackState | undefined>(
+    '/v1/me/player',
+  )
+  return mapSpotifyPlaybackState(state)
+}
+
+export async function getSpotifyPlaybackDevices(): Promise<
+  SpotifyPlaybackDevice[]
+> {
+  requireSpotifyScopes(['user-read-playback-state'])
+  const payload = await spotifyRequest<{ devices: RawSpotifyDevice[] }>(
+    '/v1/me/player/devices',
+  )
+  return payload.devices
+    .map(mapSpotifyDevice)
+    .filter((device): device is SpotifyPlaybackDevice => Boolean(device))
+}
+
+function withDevice(path: string, deviceId?: string): string {
+  const trimmed = deviceId?.trim()
+  return trimmed
+    ? `${path}${path.includes('?') ? '&' : '?'}device_id=${encodeURIComponent(trimmed)}`
+    : path
+}
+
+export async function playSpotifyTrack(
+  spotifyUri: string,
+  deviceId?: string,
+): Promise<void> {
+  requireSpotifyScopes(['user-modify-playback-state'])
+  if (!isSpotifyTrackUri(spotifyUri)) {
+    throw new Error('Only Spotify track URIs can be played from the ledger.')
+  }
+  await spotifyRequest<void>(withDevice('/v1/me/player/play', deviceId), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ uris: [spotifyUri] }),
+  })
+}
+
+export async function setSpotifyPlayback(
+  shouldPlay: boolean,
+  deviceId?: string,
+): Promise<void> {
+  requireSpotifyScopes(['user-modify-playback-state'])
+  await spotifyRequest<void>(
+    withDevice(
+      shouldPlay ? '/v1/me/player/play' : '/v1/me/player/pause',
+      deviceId,
+    ),
+    { method: 'PUT' },
+  )
+}
+
+export async function skipSpotifyPlayback(
+  direction: 'next' | 'previous',
+  deviceId?: string,
+): Promise<void> {
+  requireSpotifyScopes(['user-modify-playback-state'])
+  await spotifyRequest<void>(
+    withDevice(`/v1/me/player/${direction}`, deviceId),
+    { method: 'POST' },
+  )
+}
+
+export async function seekSpotifyPlayback(
+  positionMs: number,
+  deviceId?: string,
+): Promise<void> {
+  requireSpotifyScopes(['user-modify-playback-state'])
+  const position = clampPlaybackPosition(positionMs)
+  await spotifyRequest<void>(
+    withDevice(`/v1/me/player/seek?position_ms=${position}`, deviceId),
+    { method: 'PUT' },
+  )
+}
+
+export async function setSpotifyVolume(
+  volumePercent: number,
+  deviceId?: string,
+): Promise<void> {
+  requireSpotifyScopes(['user-modify-playback-state'])
+  const volume = clampVolumePercent(volumePercent)
+  await spotifyRequest<void>(
+    withDevice(`/v1/me/player/volume?volume_percent=${volume}`, deviceId),
+    { method: 'PUT' },
+  )
+}
+
+export async function transferSpotifyPlayback(
+  deviceId: string,
+  shouldPlay = false,
+): Promise<void> {
+  requireSpotifyScopes(['user-modify-playback-state'])
+  const trimmed = deviceId.trim()
+  if (!trimmed) throw new Error('Choose a Spotify playback device.')
+  await spotifyRequest<void>('/v1/me/player', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ device_ids: [trimmed], play: shouldPlay }),
+  })
 }
 
 async function collectRecentlyPlayed(): Promise<SpotifyPlayHistoryItem[]> {

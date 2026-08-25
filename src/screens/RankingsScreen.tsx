@@ -4,6 +4,10 @@ import { EmptyState, PageIntro, Panel, Skeleton } from '../components/Ui'
 import { api } from '../lib/api'
 import { formatDateTime } from '../lib/format'
 import type { RankingItem } from '../types'
+import {
+  SpotifyAppLink,
+  TrackPlayButton,
+} from '../components/SpotifyActions'
 
 const types = ['track', 'artist', 'album'] as const
 const periods = [
@@ -83,9 +87,25 @@ export default function RankingsScreen() {
                   </span>
                 )}
                 <div className="ranking-name">
-                  <a href={item.spotifyUrl} target="_blank" rel="noreferrer">
-                    {item.name}
-                  </a>
+                  {type === 'track' ? (
+                    <span className="track-title-actions">
+                      <TrackPlayButton spotifyUri={item.spotifyUri}>
+                        {item.name}
+                      </TrackPlayButton>
+                      <SpotifyAppLink
+                        spotifyUri={item.spotifyUri}
+                        label={`Open ${item.name} in Spotify Desktop`}
+                      />
+                    </span>
+                  ) : (
+                    <SpotifyAppLink
+                      spotifyUri={item.spotifyUri}
+                      label={`Open ${item.name} in Spotify Desktop`}
+                      className="spotify-name-link"
+                    >
+                      {item.name}
+                    </SpotifyAppLink>
+                  )}
                   <small>{item.artists || item.albumName || 'Primary artist'}</small>
                 </div>
                 <span className="ranking-last">
@@ -106,4 +126,3 @@ export default function RankingsScreen() {
     </>
   )
 }
-

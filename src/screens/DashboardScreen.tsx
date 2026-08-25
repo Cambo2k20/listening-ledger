@@ -19,6 +19,10 @@ import {
   Panel,
   Skeleton,
 } from '../components/Ui'
+import {
+  SpotifyAppLink,
+  TrackPlayButton,
+} from '../components/SpotifyActions'
 
 const periods = [
   { value: '7d', label: '7 days' },
@@ -184,13 +188,15 @@ export default function DashboardScreen() {
                     </span>
                   )}
                   <div>
-                    <a
-                      href={track.spotifyUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      {track.name}
-                    </a>
+                    <span className="track-title-actions">
+                      <TrackPlayButton spotifyUri={track.spotifyUri}>
+                        {track.name}
+                      </TrackPlayButton>
+                      <SpotifyAppLink
+                        spotifyUri={track.spotifyUri}
+                        label={`Open ${track.name} in Spotify Desktop`}
+                      />
+                    </span>
                     <small>{track.artists}</small>
                   </div>
                   <strong>{track.events}</strong>
@@ -216,9 +222,13 @@ export default function DashboardScreen() {
                 <li key={artist.id}>
                   <div>
                     <span>{index + 1}</span>
-                    <a href={artist.spotifyUrl} target="_blank" rel="noreferrer">
+                    <SpotifyAppLink
+                      spotifyUri={artist.spotifyUri}
+                      label={`Open ${artist.name} in Spotify Desktop`}
+                      className="spotify-name-link"
+                    >
                       {artist.name}
-                    </a>
+                    </SpotifyAppLink>
                     <strong>{artist.events}</strong>
                   </div>
                   <i>

@@ -14,7 +14,7 @@ import { useAppContext } from '../context'
 import { api } from '../lib/api'
 
 const authMessages: Record<string, string> = {
-  connected: 'Spotify access updated. Syncing and discovery permissions are ready.',
+  connected: 'Spotify access updated. Syncing, discovery, and player control are ready.',
   denied: 'Spotify authorization was cancelled.',
   invalid: 'Spotify returned an incomplete authorization response.',
   failed: 'Spotify authorization failed. Check the Client ID and redirect URI.',
@@ -47,7 +47,7 @@ export default function SettingsScreen() {
       <PageIntro
         eyebrow="Local configuration"
         title="Connect without over-sharing."
-        description="Listening Ledger requests four purpose-limited scopes and stores authorization tokens only in its local, Git-ignored database. Playlist access is limited to creating private playlists."
+        description="Listening Ledger requests six purpose-limited scopes and stores authorization tokens only in its local, Git-ignored database. Playlist access is limited to creating private playlists."
       />
 
       {authState && authMessages[authState] && (
@@ -85,7 +85,7 @@ export default function SettingsScreen() {
               <span>{status?.connected ? <Check size={17} /> : '3'}</span>
               <div>
                 <strong>Authorize your account</strong>
-                <p>Spotify will show the four permissions listed alongside this panel.</p>
+                <p>Spotify will show the six permissions listed alongside this panel.</p>
               </div>
             </div>
           </div>
@@ -157,6 +157,26 @@ export default function SettingsScreen() {
                 <strong>Top items</strong>
                 <code>user-top-read</code>
                 <p>Spotify affinity rankings for short, medium, and long periods.</p>
+              </div>
+            </article>
+            <article>
+              <span>
+                <Shield size={18} />
+              </span>
+              <div>
+                <strong>Playback state</strong>
+                <code>user-read-playback-state</code>
+                <p>Reads the active Spotify Connect device, current track, and playback position.</p>
+              </div>
+            </article>
+            <article>
+              <span>
+                <Shield size={18} />
+              </span>
+              <div>
+                <strong>Playback control</strong>
+                <code>user-modify-playback-state</code>
+                <p>Controls playback on the Spotify device you select. It does not stream audio through Listening Ledger.</p>
               </div>
             </article>
           </div>

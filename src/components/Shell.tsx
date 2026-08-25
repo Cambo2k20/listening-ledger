@@ -14,6 +14,7 @@ import {
 import { useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useAppContext } from '../context'
+import PlayerBar from './PlayerBar'
 
 const navigation = [
   { to: '/', label: 'Overview', icon: Gauge, end: true },
@@ -147,6 +148,7 @@ export default function Shell() {
         <main className="content">
           <Outlet />
         </main>
+        <PlayerBar />
       </div>
     </div>
   )

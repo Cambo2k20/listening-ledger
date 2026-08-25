@@ -73,6 +73,35 @@ export interface DiscoveryStatus {
   latestSession: DiscoverySession | null
 }
 
+export interface PlaybackDevice {
+  id: string
+  name: string
+  type: string
+  isActive: boolean
+  isRestricted: boolean
+  volumePercent?: number
+  supportsVolume: boolean
+}
+
+export interface PlayerTrack {
+  spotifyTrackId: string
+  spotifyUri: string
+  trackName: string
+  artistName: string
+  albumName?: string
+  imageUrl?: string
+  spotifyUrl?: string
+  durationMs: number
+}
+
+export interface PlaybackState {
+  isPlaying: boolean
+  progressMs: number
+  sampledAt: string
+  device: PlaybackDevice | null
+  track: PlayerTrack | null
+}
+
 export interface DashboardData {
   period: string
   metrics: {
@@ -88,12 +117,14 @@ export interface DashboardData {
     artists: string
     albumName?: string
     imageUrl?: string
+    spotifyUri: string
     spotifyUrl?: string
     events: number
   }>
   topArtists: Array<{
     id: string
     name: string
+    spotifyUri: string
     spotifyUrl?: string
     events: number
   }>
@@ -107,6 +138,7 @@ export interface HistoryItem {
   artists: string
   albumName?: string
   imageUrl?: string
+  spotifyUri: string
   spotifyUrl?: string
   contextUri?: string
 }
@@ -117,6 +149,7 @@ export interface RankingItem {
   artists?: string
   albumName?: string
   imageUrl?: string
+  spotifyUri: string
   spotifyUrl?: string
   events: number
   lastPlayed?: string

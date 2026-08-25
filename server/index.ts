@@ -25,9 +25,17 @@ import {
   createAuthorizationUrl,
   getGrantedSpotifyScopes,
   getMissingSpotifyScopes,
+  getSpotifyPlaybackDevices,
+  getSpotifyPlaybackState,
+  playSpotifyTrack,
+  seekSpotifyPlayback,
+  setSpotifyPlayback,
+  setSpotifyVolume,
+  skipSpotifyPlayback,
   SPOTIFY_SCOPES,
   SpotifyAuthorizationError,
   syncRecentPlayback,
+  transferSpotifyPlayback,
 } from './spotify.ts'
 import type {
   DiscoveryFeedbackStatus,
@@ -95,6 +103,131 @@ function externalErrorStatus(error: unknown): number {
 
 app.get('/api/discovery/status', (_request, response) => {
   response.json(getDiscoveryStatus())
+})
+
+app.get('/api/player/state', async (_request, response) => {
+  try {
+    response.json(await getSpotifyPlaybackState())
+  } catch (error) {
+    response.status(externalErrorStatus(error)).json({
+      error: error instanceof Error ? error.message : 'Playback state failed.',
+    })
+  }
+})
+
+app.get('/api/player/devices', async (_request, response) => {
+  try {
+    response.json({ devices: await getSpotifyPlaybackDevices() })
+  } catch (error) {
+    response.status(externalErrorStatus(error)).json({
+      error: error instanceof Error ? error.message : 'Device lookup failed.',
+    })
+  }
+})
+
+app.put('/api/player/play', async (request, response) => {
+  try {
+    const spotifyUri = String(request.body?.spotifyUri ?? '')
+    const deviceId = String(request.body?.deviceId ?? '') || undefined
+    await playSpotifyTrack(spotifyUri, deviceId)
+    response.status(204).end()
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Playback failed.'
+    response
+      .status(message.includes('Only Spotify track URIs') ? 400 : externalErrorStatus(error))
+      .json({ error: message })
+  }
+})
+
+app.put('/api/player/playback', async (request, response) => {
+  try {
+    if (typeof request.body?.isPlaying !== 'boolean') {
+      response.status(400).json({ error: 'isPlaying must be true or false.' })
+      return
+    }
+    await setSpotifyPlayback(
+      request.body.isPlaying,
+      String(request.body?.deviceId ?? '') || undefined,
+    )
+    response.status(204).end()
+  } catch (error) {
+    response.status(externalErrorStatus(error)).json({
+      error: error instanceof Error ? error.message : 'Playback control failed.',
+    })
+  }
+})
+
+app.post('/api/player/skip', async (request, response) => {
+  try {
+    const direction = String(request.body?.direction ?? '')
+    if (direction !== 'next' && direction !== 'previous') {
+      response.status(400).json({ error: 'Direction must be next or previous.' })
+      return
+    }
+    await skipSpotifyPlayback(
+      direction,
+      String(request.body?.deviceId ?? '') || undefined,
+    )
+    response.status(204).end()
+  } catch (error) {
+    response.status(externalErrorStatus(error)).json({
+      error: error instanceof Error ? error.message : 'Skip failed.',
+    })
+  }
+})
+
+app.put('/api/player/seek', async (request, response) => {
+  try {
+    const positionMs = Number(request.body?.positionMs)
+    if (!Number.isFinite(positionMs)) {
+      response.status(400).json({ error: 'positionMs must be a number.' })
+      return
+    }
+    await seekSpotifyPlayback(
+      positionMs,
+      String(request.body?.deviceId ?? '') || undefined,
+    )
+    response.status(204).end()
+  } catch (error) {
+    response.status(externalErrorStatus(error)).json({
+      error: error instanceof Error ? error.message : 'Seek failed.',
+    })
+  }
+})
+
+app.put('/api/player/volume', async (request, response) => {
+  try {
+    const volumePercent = Number(request.body?.volumePercent)
+    if (!Number.isFinite(volumePercent)) {
+      response.status(400).json({ error: 'volumePercent must be a number.' })
+      return
+    }
+    await setSpotifyVolume(
+      volumePercent,
+      String(request.body?.deviceId ?? '') || undefined,
+    )
+    response.status(204).end()
+  } catch (error) {
+    response.status(externalErrorStatus(error)).json({
+      error: error instanceof Error ? error.message : 'Volume control failed.',
+    })
+  }
+})
+
+app.put('/api/player/device', async (request, response) => {
+  try {
+    const deviceId = String(request.body?.deviceId ?? '')
+    if (!deviceId.trim()) {
+      response.status(400).json({ error: 'Choose a Spotify playback device.' })
+      return
+    }
+    await transferSpotifyPlayback(deviceId, Boolean(request.body?.isPlaying))
+    response.status(204).end()
+  } catch (error) {
+    response.status(externalErrorStatus(error)).json({
+      error: error instanceof Error ? error.message : 'Device transfer failed.',
+    })
+  }
 })
 
 app.get('/api/discovery/seeds', async (request, response) => {

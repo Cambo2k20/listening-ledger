@@ -126,3 +126,32 @@ export interface DiscoverySessionRecord {
   savedAt?: string
   candidates: DiscoveryCandidateRecord[]
 }
+
+export interface SpotifyPlaybackDevice {
+  id: string
+  name: string
+  type: string
+  isActive: boolean
+  isRestricted: boolean
+  volumePercent?: number
+  supportsVolume: boolean
+}
+
+export interface SpotifyPlayerTrack {
+  spotifyTrackId: string
+  spotifyUri: string
+  trackName: string
+  artistName: string
+  albumName?: string
+  imageUrl?: string
+  spotifyUrl?: string
+  durationMs: number
+}
+
+export interface SpotifyPlaybackState {
+  isPlaying: boolean
+  progressMs: number
+  sampledAt: string
+  device: SpotifyPlaybackDevice | null
+  track: SpotifyPlayerTrack | null
+}
