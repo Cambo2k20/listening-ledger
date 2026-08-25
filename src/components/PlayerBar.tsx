@@ -14,6 +14,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAppContext } from '../context'
 import { SpotifyDestinationLinks } from './SpotifyActions'
+import { SpotifyAttribution } from './SpotifyAttribution'
 
 function formatDuration(value: number): string {
   const totalSeconds = Math.max(0, Math.floor(value / 1000))
@@ -191,6 +192,11 @@ export default function PlayerBar() {
           </div>
 
           <div className="player-output">
+            <SpotifyAttribution
+              compact
+              href={player?.track?.spotifyUrl ?? 'https://open.spotify.com/'}
+              className="player-spotify-mark"
+            />
             <button
               className="player-refresh"
               onClick={() => void refreshPlayer()}

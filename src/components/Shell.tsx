@@ -6,6 +6,7 @@ import {
   Gauge,
   History,
   Menu,
+  NotebookTabs,
   Radar,
   RefreshCw,
   Settings,
@@ -15,6 +16,7 @@ import { useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useAppContext } from '../context'
 import PlayerBar from './PlayerBar'
+import { SpotifyAttribution } from './SpotifyAttribution'
 
 const navigation = [
   { to: '/', label: 'Overview', icon: Gauge, end: true },
@@ -46,9 +48,7 @@ export default function Shell() {
       <aside className={`sidebar ${open ? 'sidebar--open' : ''}`}>
         <div className="brand-row">
           <div className="brand-mark" aria-hidden="true">
-            <span />
-            <span />
-            <span />
+            <NotebookTabs size={21} strokeWidth={2.1} />
           </div>
           <div>
             <strong>Listening Ledger</strong>
@@ -119,6 +119,7 @@ export default function Shell() {
           </div>
 
           <div className="topbar-actions">
+            <SpotifyAttribution className="topbar-spotify-attribution" />
             {syncMessage && <span className="sync-message">{syncMessage}</span>}
             <button
               className="button button--quiet"
