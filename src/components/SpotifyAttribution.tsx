@@ -1,5 +1,5 @@
 import spotifyFullLogo from '../assets/spotify-full-logo-white.svg'
-import spotifyPinkPurpleIcon from '../assets/spotify-pink-purple-icon.svg'
+import spotifyPrimaryLogoWhite from '../assets/spotify-primary-logo-white.svg'
 
 export function SpotifyAttribution({
   compact = false,
@@ -21,10 +21,10 @@ export function SpotifyAttribution({
     >
       {!compact && <span>Content from</span>}
       {compact ? (
-        <img src={spotifyPinkPurpleIcon} alt="Spotify" />
+        <img src={spotifyPrimaryLogoWhite} alt="Spotify" />
       ) : (
         <picture>
-          <source media="(max-width: 620px)" srcSet={spotifyPinkPurpleIcon} />
+          <source media="(max-width: 620px)" srcSet={spotifyPrimaryLogoWhite} />
           <img src={spotifyFullLogo} alt="Spotify" />
         </picture>
       )}
