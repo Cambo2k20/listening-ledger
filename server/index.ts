@@ -11,12 +11,16 @@ import {
   getHealth,
   getHistory,
   getRankings,
+  getRecordsAndMilestones,
   getStoredToken,
   getTrends,
   type DetailEntityType,
 } from './db.ts'
 import {
+  generateArtistDiveSession,
   generateDiscoverySession,
+  getArtistDiveArtistOptions,
+  getArtistDiveProfile,
   getDiscoverySeeds,
   getDiscoveryStatus,
   saveDiscoveryPlaylist,
@@ -44,6 +48,7 @@ import {
   transferSpotifyPlayback,
 } from './spotify.ts'
 import type {
+  ArtistDiveMode,
   DiscoveryFeedbackStatus,
   DiscoveryMode,
   DiscoverySeed,
@@ -117,6 +122,10 @@ app.get('/api/details/:type/:id', (request, response) => {
 
 app.get('/api/trends', (_request, response) => {
   response.json(getTrends())
+})
+
+app.get('/api/records', (_request, response) => {
+  response.json(getRecordsAndMilestones())
 })
 
 app.get('/api/health', (_request, response) => {
@@ -306,6 +315,19 @@ app.get('/api/discovery/seeds', async (request, response) => {
   }
 })
 
+app.get('/api/discovery/artists', (request, response) => {
+  response.json(getArtistDiveArtistOptions(String(request.query.q ?? '')))
+})
+
+app.get('/api/discovery/artists/:id', (request, response) => {
+  try {
+    response.json(getArtistDiveProfile(String(request.params.id)))
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Artist lookup failed.'
+    response.status(message.includes('not appeared') ? 404 : 400).json({ error: message })
+  }
+})
+
 app.post('/api/discovery/generate', async (request, response) => {
   try {
     const body = request.body as {
@@ -324,6 +346,37 @@ app.post('/api/discovery/generate', async (request, response) => {
     const message = error instanceof Error ? error.message : 'Discovery failed.'
     const status =
       message.includes('Select at least') || message.includes('mode must')
+        ? 400
+        : externalErrorStatus(error)
+    response.status(status).json({ error: message })
+  }
+})
+
+app.post('/api/discovery/artist-dive', async (request, response) => {
+  try {
+    const body = request.body as {
+      artistId?: string
+      seedTrackIds?: string[]
+      mode?: ArtistDiveMode
+      includeFavorites?: boolean
+      targetCount?: number
+    }
+    response.status(201).json(
+      await generateArtistDiveSession({
+        artistId: String(body.artistId ?? ''),
+        seedTrackIds: Array.isArray(body.seedTrackIds) ? body.seedTrackIds : [],
+        mode: body.mode ?? 'albums',
+        includeFavorites: body.includeFavorites !== false,
+        targetCount: body.targetCount,
+      }),
+    )
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Artist dive failed.'
+    const status =
+      message.includes('Select at least') ||
+      message.includes('mode must') ||
+      message.includes('has not appeared') ||
+      message.includes('needs at least')
         ? 400
         : externalErrorStatus(error)
     response.status(status).json({ error: message })

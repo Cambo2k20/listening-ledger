@@ -11,8 +11,9 @@ import {
   Sparkles,
   X,
 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
+import { ArtistDiveBuilder } from '../components/ArtistDiveBuilder'
 import { EmptyState, PageIntro, Panel, Skeleton } from '../components/Ui'
 import { useAppContext } from '../context'
 import { api } from '../lib/api'
@@ -43,6 +44,15 @@ const modes: Array<{ value: DiscoveryMode; label: string; detail: string }> = [
   { value: 'wild', label: 'Wild', detail: 'Prioritises unfamiliar artists' },
 ]
 
+type DiscoveryView = 'related' | 'artist'
+
+const relationshipLabels = {
+  similar: 'Direct match',
+  album: 'Album bridge',
+  catalog: 'Catalogue pick',
+  anchor: 'Familiar anchor',
+} as const
+
 function feedbackLabel(status: DiscoveryFeedbackStatus): string {
   if (status === 'love') return 'Loved'
   if (status === 'reject') return 'Rejected'
@@ -52,6 +62,12 @@ function feedbackLabel(status: DiscoveryFeedbackStatus): string {
 
 export default function DiscoverScreen() {
   const { status: appStatus } = useAppContext()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const discoveryView: DiscoveryView =
+    searchParams.get('view') === 'artist' || searchParams.has('artist')
+      ? 'artist'
+      : 'related'
+  const requestedArtistId = searchParams.get('artist') ?? undefined
   const [status, setStatus] = useState<DiscoveryStatus | null>(null)
   const [source, setSource] = useState<DiscoverySeedSource>('ledger')
   const [query, setQuery] = useState('')
@@ -78,6 +94,10 @@ export default function DiscoverScreen() {
   }, [])
 
   useEffect(() => {
+    if (discoveryView !== 'related') {
+      setLoadingSeeds(false)
+      return
+    }
     if (!appStatus?.connected) {
       setLoadingSeeds(false)
       return
@@ -104,16 +124,42 @@ export default function DiscoverScreen() {
       source === 'search' || source === 'ledger' ? 250 : 0,
     )
     return () => window.clearTimeout(timeout)
-  }, [appStatus?.connected, query, source])
+  }, [appStatus?.connected, discoveryView, query, source])
 
   const selectedIds = useMemo(
     () => new Set(selected.map((seed) => seed.spotifyTrackId)),
     [selected],
   )
+  const activeSession =
+    session?.kind === (discoveryView === 'artist' ? 'artist_dive' : 'related_tracks')
+      ? session
+      : null
   const keptCount =
-    session?.candidates.filter(
+    activeSession?.candidates.filter(
       (candidate) => candidate.decision !== 'reject' && candidate.decision !== 'known',
     ).length ?? 0
+
+  const handleArtistError = useCallback((message: string | null) => {
+    setError(message)
+  }, [])
+
+  const handleArtistChange = useCallback(
+    (artistId: string) => {
+      const next = new URLSearchParams(searchParams)
+      next.set('view', 'artist')
+      next.set('artist', artistId)
+      setSearchParams(next, { replace: true })
+    },
+    [searchParams, setSearchParams],
+  )
+
+  const selectDiscoveryView = (view: DiscoveryView) => {
+    const next = new URLSearchParams(searchParams)
+    next.set('view', view)
+    if (view === 'related') next.delete('artist')
+    setSearchParams(next, { replace: true })
+    setError(null)
+  }
 
   const selectSeed = (seed: DiscoverySeed) => {
     setSelected((current) => {
@@ -162,12 +208,12 @@ export default function DiscoverScreen() {
   }
 
   const savePlaylist = async () => {
-    if (!session) return
+    if (!activeSession) return
     setSaving(true)
     setError(null)
     try {
       const result = await api<DiscoverySession>(
-        `/api/discovery/sessions/${session.id}/playlist`,
+        `/api/discovery/sessions/${activeSession.id}/playlist`,
         {
           method: 'POST',
           body: JSON.stringify({ name: playlistName }),
@@ -204,9 +250,46 @@ export default function DiscoverScreen() {
     <>
       <PageIntro
         eyebrow="On-demand discovery"
-        title="Turn favourites into fresh finds."
-        description="Last.fm finds related tracks, Spotify supplies the playable match, and your local ledger keeps familiar songs out. No AI training and no invented listening claims."
+        title={
+          discoveryView === 'artist'
+            ? 'Go beyond the songs you already know.'
+            : 'Turn favourites into fresh finds.'
+        }
+        description={
+          discoveryView === 'artist'
+            ? 'Choose an artist you have only partly explored, then build an explainable journey through their unheard studio catalogue.'
+            : 'Last.fm finds related tracks, Spotify supplies the playable match, and your local ledger keeps familiar songs out. No AI training and no invented listening claims.'
+        }
       />
+
+      <div className="discovery-view-tabs" role="tablist" aria-label="Discovery feature">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={discoveryView === 'related'}
+          className={discoveryView === 'related' ? 'active' : ''}
+          onClick={() => selectDiscoveryView('related')}
+        >
+          <Sparkles size={17} />
+          <span>
+            <strong>Related tracks</strong>
+            <small>Branch out from songs you love</small>
+          </span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={discoveryView === 'artist'}
+          className={discoveryView === 'artist' ? 'active' : ''}
+          onClick={() => selectDiscoveryView('artist')}
+        >
+          <Disc3 size={17} />
+          <span>
+            <strong>Artist Deep Dive</strong>
+            <small>Explore one familiar catalogue</small>
+          </span>
+        </button>
+      </div>
 
       {(!status?.lastFmConfigured || Boolean(status?.missingScopes.length)) && (
         <div className="notice notice--warning discovery-notice">
@@ -236,7 +319,8 @@ export default function DiscoverScreen() {
         </div>
       )}
 
-      <div className="discovery-layout">
+      {discoveryView === 'related' ? (
+        <div className="discovery-layout">
         <Panel
           title="Choose 1–5 seed tracks"
           kicker="Step 1 · Start with what you love"
@@ -395,17 +479,33 @@ export default function DiscoverScreen() {
             and playlist creation come from Spotify.
           </p>
         </Panel>
-      </div>
+        </div>
+      ) : (
+        <ArtistDiveBuilder
+          initialArtistId={requestedArtistId}
+          lastFmConfigured={Boolean(status?.lastFmConfigured)}
+          onArtistChange={handleArtistChange}
+          onGenerated={(result) => {
+            setSession(result)
+            setPlaylistName('')
+          }}
+          onError={handleArtistError}
+        />
+      )}
 
-      {session && (
+      {activeSession && (
         <Panel
-          title="Review the recommendations"
-          kicker={`Step 3 · ${session.candidates.length} matches · ${session.mode} mode`}
+          title={
+            activeSession.kind === 'artist_dive' && activeSession.focusArtist
+              ? `Review the ${activeSession.focusArtist.name} playlist`
+              : 'Review the recommendations'
+          }
+          kicker={`Step 3 · ${activeSession.candidates.length} proposed tracks · ${activeSession.mode} mode`}
           className="discovery-results-panel"
           action={<span className="selection-count">{keptCount} kept</span>}
         >
           <div className="discovery-results">
-            {session.candidates.map((candidate) => (
+            {activeSession.candidates.map((candidate) => (
               <article
                 key={candidate.id}
                 className={`discovery-result discovery-result--${candidate.decision}`}
@@ -444,38 +544,70 @@ export default function DiscoverScreen() {
                         {candidate.albumName ? ` · ${candidate.albumName}` : ''}
                       </SpotifyDesktopTextLink>
                     </div>
-                    <span className={candidate.isNewArtist ? 'new-artist' : 'deep-cut'}>
-                      {candidate.isNewArtist ? 'New artist' : 'Familiar artist'}
+                    <span
+                      className={
+                        activeSession.kind === 'artist_dive'
+                          ? `relationship-badge relationship-badge--${candidate.relationshipKind}`
+                          : candidate.isNewArtist
+                            ? 'new-artist'
+                            : 'deep-cut'
+                      }
+                    >
+                      {activeSession.kind === 'artist_dive'
+                        ? relationshipLabels[candidate.relationshipKind]
+                        : candidate.isNewArtist
+                          ? 'New artist'
+                          : 'Familiar artist'}
                     </span>
                   </div>
                   <p>{candidate.reason}</p>
-                  <small className="result-status">{feedbackLabel(candidate.decision)}</small>
+                  <small className="result-status">
+                    {candidate.isAnchor
+                      ? candidate.decision === 'reject'
+                        ? 'Removed from playlist'
+                        : 'Included as a familiar anchor'
+                      : feedbackLabel(candidate.decision)}
+                  </small>
                 </div>
                 <div className="feedback-actions" aria-label={`Review ${candidate.trackName}`}>
-                  <button
-                    className={candidate.decision === 'love' ? 'active love' : ''}
-                    onClick={() => void setFeedback(candidate.id, candidate.decision, 'love')}
-                    aria-pressed={candidate.decision === 'love'}
-                    title="Love this recommendation"
-                  >
-                    <Heart size={15} /> <span>Love</span>
-                  </button>
-                  <button
-                    className={candidate.decision === 'known' ? 'active known' : ''}
-                    onClick={() => void setFeedback(candidate.id, candidate.decision, 'known')}
-                    aria-pressed={candidate.decision === 'known'}
-                    title="Mark as already known"
-                  >
-                    <Eye size={15} /> <span>I know it</span>
-                  </button>
-                  <button
-                    className={candidate.decision === 'reject' ? 'active reject' : ''}
-                    onClick={() => void setFeedback(candidate.id, candidate.decision, 'reject')}
-                    aria-pressed={candidate.decision === 'reject'}
-                    title="Reject this recommendation"
-                  >
-                    <X size={15} /> <span>Reject</span>
-                  </button>
+                  {candidate.isAnchor ? (
+                    <button
+                      className={candidate.decision === 'reject' ? 'active known' : ''}
+                      onClick={() => void setFeedback(candidate.id, candidate.decision, 'reject')}
+                      aria-pressed={candidate.decision === 'reject'}
+                      title={candidate.decision === 'reject' ? 'Restore familiar anchor' : 'Remove familiar anchor'}
+                    >
+                      {candidate.decision === 'reject' ? <Check size={15} /> : <X size={15} />}
+                      <span>{candidate.decision === 'reject' ? 'Restore' : 'Remove'}</span>
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        className={candidate.decision === 'love' ? 'active love' : ''}
+                        onClick={() => void setFeedback(candidate.id, candidate.decision, 'love')}
+                        aria-pressed={candidate.decision === 'love'}
+                        title="Love this recommendation"
+                      >
+                        <Heart size={15} /> <span>Love</span>
+                      </button>
+                      <button
+                        className={candidate.decision === 'known' ? 'active known' : ''}
+                        onClick={() => void setFeedback(candidate.id, candidate.decision, 'known')}
+                        aria-pressed={candidate.decision === 'known'}
+                        title="Mark as already known"
+                      >
+                        <Eye size={15} /> <span>I know it</span>
+                      </button>
+                      <button
+                        className={candidate.decision === 'reject' ? 'active reject' : ''}
+                        onClick={() => void setFeedback(candidate.id, candidate.decision, 'reject')}
+                        aria-pressed={candidate.decision === 'reject'}
+                        title="Reject this recommendation"
+                      >
+                        <X size={15} /> <span>Reject</span>
+                      </button>
+                    </>
+                  )}
                 </div>
               </article>
             ))}
@@ -484,27 +616,32 @@ export default function DiscoverScreen() {
           <div className="playlist-builder">
             <div>
               <span className="eyebrow">Step 4 · Private by default</span>
-              <h3>{session.playlistId ? 'Playlist saved.' : 'Ready to keep the winners?'}</h3>
+              <h3>{activeSession.playlistId ? 'Playlist saved.' : 'Ready to keep the winners?'}</h3>
               <p>
-                Rejected and already-known tracks stay in your local review history but
-                will not be added to Spotify.
+                {activeSession.kind === 'artist_dive'
+                  ? 'This is the proposed playlist order. Removed anchors, rejected tracks, and already-known tracks stay in local review history but will not be added to Spotify.'
+                  : 'Rejected and already-known tracks stay in your local review history but will not be added to Spotify.'}
               </p>
             </div>
-            {session.playlistUrl ? (
+            {activeSession.playlistUrl ? (
               <a
                 className="button button--primary"
-                href={session.playlistUrl}
+                href={activeSession.playlistUrl}
                 target="_blank"
                 rel="noreferrer"
               >
-                <ListMusic size={17} /> Open {session.playlistName}
+                <ListMusic size={17} /> Open {activeSession.playlistName}
               </a>
             ) : (
               <div className="playlist-actions">
                 <input
                   value={playlistName}
                   onChange={(event) => setPlaylistName(event.target.value)}
-                  placeholder="Playlist name (optional)"
+                  placeholder={
+                    activeSession.kind === 'artist_dive' && activeSession.focusArtist
+                      ? `${activeSession.focusArtist.name} deep dive (optional)`
+                      : 'Playlist name (optional)'
+                  }
                   maxLength={100}
                   aria-label="Playlist name"
                 />
@@ -521,11 +658,15 @@ export default function DiscoverScreen() {
           </div>
 
           <p className="attribution">
-            Similar-track data provided by{' '}
+            {activeSession.kind === 'artist_dive'
+              ? 'Direct track relationships provided by '
+              : 'Similar-track data provided by '}
             <a href="https://www.last.fm/" target="_blank" rel="noreferrer">
               Last.fm <ExternalLink size={11} />
             </a>
-            . Spotify track matches remain Spotify content and are not used to train a model.
+            {activeSession.kind === 'artist_dive'
+              ? '. Album bridges and catalogue picks use Spotify catalogue metadata and do not claim direct similarity.'
+              : '. Spotify track matches remain Spotify content and are not used to train a model.'}
           </p>
         </Panel>
       )}

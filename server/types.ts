@@ -9,6 +9,11 @@ export interface SpotifyAlbum {
   id: string
   name: string
   uri: string
+  album_type?: 'album' | 'single' | 'compilation'
+  album_group?: 'album' | 'single' | 'compilation' | 'appears_on'
+  release_date?: string
+  total_tracks?: number
+  artists?: SpotifyArtist[]
   images?: Array<{ url: string; height?: number; width?: number }>
   external_urls?: { spotify?: string }
 }
@@ -65,6 +70,14 @@ export interface TrendInsight {
 }
 
 export type DiscoveryMode = 'safe' | 'balanced' | 'wild'
+export type ArtistDiveMode = 'close' | 'albums' | 'deep'
+export type DiscoverySessionMode = DiscoveryMode | ArtistDiveMode
+export type DiscoverySessionKind = 'related_tracks' | 'artist_dive'
+export type DiscoveryRelationshipKind =
+  | 'similar'
+  | 'album'
+  | 'catalog'
+  | 'anchor'
 export type DiscoverySeedSource = 'ledger' | 'top' | 'liked' | 'search'
 export type DiscoveryFeedbackStatus = 'love' | 'reject' | 'known' | 'neutral'
 
@@ -72,8 +85,12 @@ export interface DiscoverySeed {
   spotifyTrackId: string
   spotifyUri: string
   trackName: string
+  artistId?: string
   artistName: string
+  albumId?: string
+  albumUri?: string
   albumName?: string
+  releaseDate?: string
   imageUrl?: string
   spotifyUrl?: string
   source: DiscoverySeedSource
@@ -92,8 +109,12 @@ export interface ResolvedDiscoveryCandidate {
   spotifyTrackId: string
   spotifyUri: string
   trackName: string
+  artistId?: string
   artistName: string
+  albumId?: string
+  albumUri?: string
   albumName?: string
+  releaseDate?: string
   imageUrl?: string
   spotifyUrl?: string
   durationMs?: number
@@ -105,7 +126,9 @@ export interface ResolvedDiscoveryCandidate {
 export interface RankedDiscoveryCandidate extends ResolvedDiscoveryCandidate {
   score: number
   reason: string
+  relationshipKind: DiscoveryRelationshipKind
   isNewArtist: boolean
+  isAnchor: boolean
   decision: DiscoveryFeedbackStatus
 }
 
@@ -117,14 +140,46 @@ export interface DiscoveryCandidateRecord extends RankedDiscoveryCandidate {
 export interface DiscoverySessionRecord {
   id: number
   createdAt: string
-  mode: DiscoveryMode
+  kind: DiscoverySessionKind
+  mode: DiscoverySessionMode
   targetCount: number
   seeds: DiscoverySeed[]
+  focusArtist?: {
+    id: string
+    name: string
+    spotifyUri: string
+    spotifyUrl?: string
+    imageUrl?: string
+  }
   playlistId?: string
   playlistName?: string
   playlistUrl?: string
   savedAt?: string
   candidates: DiscoveryCandidateRecord[]
+}
+
+export interface ArtistDiveArtistOption {
+  id: string
+  name: string
+  spotifyUri: string
+  spotifyUrl?: string
+  imageUrl?: string
+  events: number
+  activeDays: number
+  distinctTracks: number
+  topTwoShare: number
+  topItemSignal: boolean
+  lovedTrackSignal: boolean
+  score: number
+}
+
+export interface ArtistCatalogTrack extends ResolvedDiscoveryCandidate {
+  artistId: string
+  albumId: string
+  albumUri: string
+  albumName: string
+  releaseDate?: string
+  albumType: 'album' | 'single'
 }
 
 export interface SpotifyPlaybackDevice {

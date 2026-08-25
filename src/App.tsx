@@ -10,6 +10,7 @@ import DiscoverScreen from './screens/DiscoverScreen'
 import EntityDetailScreen from './screens/EntityDetailScreen'
 import HistoryScreen from './screens/HistoryScreen'
 import RankingsScreen from './screens/RankingsScreen'
+import RecordsScreen from './screens/RecordsScreen'
 import SettingsScreen from './screens/SettingsScreen'
 import TrendsScreen from './screens/TrendsScreen'
 import type { AppStatus, PlaybackDevice, PlaybackState } from './types'
@@ -287,6 +288,7 @@ export default function App() {
           <Route path="artists/:id" element={<EntityDetailScreen type="artist" />} />
           <Route path="albums/:id" element={<EntityDetailScreen type="album" />} />
           <Route path="trends" element={<TrendsScreen />} />
+          <Route path="records" element={<RecordsScreen />} />
           <Route path="discover" element={<DiscoverScreen />} />
           <Route path="health" element={<DataHealthScreen />} />
           <Route path="settings" element={<SettingsScreen />} />

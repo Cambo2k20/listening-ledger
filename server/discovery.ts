@@ -1,6 +1,11 @@
 import { config } from './config.ts'
 import {
   createDiscoverySession,
+  getArtistDiveArtist,
+  getArtistDiveOptions,
+  getArtistDiveSeeds,
+  getArtistKnownAlbumIds,
+  getCachedArtistCatalog,
   getCachedDiscoveryTrack,
   getDiscoveryFeedbackMap,
   getDiscoveryPlaylistTracks,
@@ -9,9 +14,15 @@ import {
   getLedgerDiscoverySeeds,
   markDiscoveryPlaylistSaved,
   saveCachedDiscoveryTrack,
+  saveCachedArtistCatalog,
   saveDiscoveryCandidates,
   setDiscoveryFeedback,
 } from './db.ts'
+import {
+  createArtistDiveAnchor,
+  orderArtistDivePlaylist,
+  rankArtistDiveCandidates,
+} from './lib/artist-dive.ts'
 import {
   aggregateLastFmCandidates,
   isUnwantedVariant,
@@ -25,11 +36,13 @@ import {
   getLikedSpotifyTracks,
   getMissingSpotifyScopes,
   getSpotifyTopTracks,
+  getSpotifyArtistCatalog,
   hasSpotifyScopes,
   resolveSpotifyTrack,
   searchSpotifyTracks,
 } from './spotify.ts'
 import type {
+  ArtistDiveMode,
   DiscoveryFeedbackStatus,
   DiscoveryMode,
   DiscoverySeed,
@@ -40,6 +53,8 @@ import type {
 
 const generationLimit = 20
 const seedLimit = 5
+const artistDiveTargetCount = 12
+const artistDiveMinimumRecommendations = 8
 
 export function getDiscoveryStatus(): Record<string, unknown> {
   return {
@@ -60,6 +75,16 @@ export async function getDiscoverySeeds(
   if (source === 'top') return getSpotifyTopTracks()
   if (source === 'liked') return getLikedSpotifyTracks()
   return searchSpotifyTracks(query, 'search')
+}
+
+export function getArtistDiveArtistOptions(query = ''): Record<string, unknown> {
+  return getArtistDiveOptions(query, 30)
+}
+
+export function getArtistDiveProfile(artistId: string): Record<string, unknown> {
+  const artist = getArtistDiveArtist(artistId)
+  if (!artist) throw new Error('This artist has not appeared in your ledger.')
+  return { artist, seeds: getArtistDiveSeeds(artistId, 20) }
 }
 
 function validateSeeds(seeds: DiscoverySeed[]): DiscoverySeed[] {
@@ -170,6 +195,93 @@ export async function generateDiscoverySession(input: {
   return session
 }
 
+export async function generateArtistDiveSession(input: {
+  artistId: string
+  seedTrackIds: string[]
+  mode: ArtistDiveMode
+  includeFavorites?: boolean
+  targetCount?: number
+}): Promise<DiscoverySessionRecord> {
+  if (!config.lastFmApiKey) {
+    throw new Error('LASTFM_API_KEY is not configured.')
+  }
+  if (!['close', 'albums', 'deep'].includes(input.mode)) {
+    throw new Error('Artist dive mode must be close, albums, or deep.')
+  }
+  const artistId = input.artistId.trim()
+  const artist = getArtistDiveArtist(artistId)
+  if (!artist) throw new Error('This artist has not appeared in your ledger.')
+
+  const availableSeeds = getArtistDiveSeeds(artistId, 50)
+  const requestedIds = new Set(
+    input.seedTrackIds.map((id) => id.trim()).filter(Boolean).slice(0, 3),
+  )
+  const seeds = availableSeeds.filter((seed) => requestedIds.has(seed.spotifyTrackId))
+  if (!seeds.length) {
+    throw new Error('Select at least one recorded track by this artist.')
+  }
+
+  const targetCount = Math.min(
+    Math.max(Math.floor(input.targetCount ?? artistDiveTargetCount), 8),
+    generationLimit,
+  )
+  let catalog = getCachedArtistCatalog(artistId)
+  if (!catalog) {
+    catalog = await getSpotifyArtistCatalog(artistId)
+    saveCachedArtistCatalog(artistId, catalog)
+  }
+
+  const similarLists = await Promise.all(
+    seeds.map((seed) => getLastFmSimilarTracks(seed)),
+  )
+  const similarCandidates = aggregateLastFmCandidates(similarLists.flat()).filter(
+    (candidate) =>
+      normalizeDiscoveryText(candidate.artistName) ===
+      normalizeDiscoveryText(artist.name),
+  )
+  const known = getKnownDiscoveryCatalog()
+  const feedback = getDiscoveryFeedbackMap()
+  const knownAlbumIds = getArtistKnownAlbumIds(artistId)
+  const ranked = rankArtistDiveCandidates({
+    catalog,
+    seeds,
+    similarCandidates,
+    mode: input.mode,
+    limit: generationLimit,
+    knownTrackIds: known.trackIds,
+    knownTrackKeys: known.trackKeys,
+    knownAlbumIds,
+    feedback,
+  })
+  if (ranked.length < artistDiveMinimumRecommendations) {
+    const artistSentence = /[.!?]$/.test(artist.name) ? artist.name : `${artist.name}.`
+    throw new Error(
+      `Artist Deep Dive needs at least ${artistDiveMinimumRecommendations} unheard studio tracks. Only ${ranked.length} eligible track${ranked.length === 1 ? ' was' : 's were'} found for ${artistSentence}`,
+    )
+  }
+
+  const anchors =
+    input.includeFavorites === false
+      ? []
+      : seeds.slice(0, 2).map((seed) => createArtistDiveAnchor(seed, artistId))
+  const candidates = orderArtistDivePlaylist(ranked, anchors, targetCount)
+  const focusArtist = {
+    id: artist.id,
+    name: artist.name,
+    spotifyUri: artist.spotifyUri,
+    spotifyUrl: artist.spotifyUrl,
+    imageUrl: artist.imageUrl,
+  }
+  const sessionId = createDiscoverySession(input.mode, targetCount, seeds, {
+    kind: 'artist_dive',
+    focusArtist,
+  })
+  saveDiscoveryCandidates(sessionId, candidates)
+  const session = getDiscoverySession(sessionId)
+  if (!session) throw new Error('The Artist Deep Dive session could not be saved.')
+  return session
+}
+
 export function updateDiscoveryFeedback(
   candidateId: number,
   status: DiscoveryFeedbackStatus,
@@ -192,10 +304,19 @@ export async function saveDiscoveryPlaylist(
     throw new Error('Keep at least one recommendation before saving the playlist.')
   }
   const defaultName = `Listening Ledger discoveries ${new Date().toISOString().slice(0, 10)}`
-  const name = requestedName?.trim().slice(0, 100) || defaultName
+  const artistDiveName = session.focusArtist
+    ? `${session.focusArtist.name} — Beyond the favourites`
+    : defaultName
+  const name =
+    requestedName?.trim().slice(0, 100) ||
+    (session.kind === 'artist_dive' ? artistDiveName : defaultName)
+  const description =
+    session.kind === 'artist_dive' && session.focusArtist
+      ? `An explainable ${session.focusArtist.name} deep dive built from your local Listening Ledger, Last.fm track relationships, and Spotify catalogue metadata.`
+      : 'Built from your Listening Ledger seeds using Last.fm similarity, then matched on Spotify.'
   const playlist = await createPrivateSpotifyPlaylist(
     name,
-    'Built from your Listening Ledger seeds using Last.fm similarity, then matched on Spotify.',
+    description,
     tracks.map((track) => track.spotifyUri),
   )
   markDiscoveryPlaylistSaved(sessionId, playlist)

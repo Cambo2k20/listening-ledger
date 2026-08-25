@@ -16,6 +16,14 @@ export interface AppStatus {
 }
 
 export type DiscoveryMode = 'safe' | 'balanced' | 'wild'
+export type ArtistDiveMode = 'close' | 'albums' | 'deep'
+export type DiscoverySessionMode = DiscoveryMode | ArtistDiveMode
+export type DiscoverySessionKind = 'related_tracks' | 'artist_dive'
+export type DiscoveryRelationshipKind =
+  | 'similar'
+  | 'album'
+  | 'catalog'
+  | 'anchor'
 export type DiscoverySeedSource = 'ledger' | 'top' | 'liked' | 'search'
 export type DiscoveryFeedbackStatus = 'love' | 'reject' | 'known' | 'neutral'
 
@@ -23,8 +31,12 @@ export interface DiscoverySeed {
   spotifyTrackId: string
   spotifyUri: string
   trackName: string
+  artistId?: string
   artistName: string
+  albumId?: string
+  albumUri?: string
   albumName?: string
+  releaseDate?: string
   imageUrl?: string
   spotifyUrl?: string
   source: DiscoverySeedSource
@@ -37,8 +49,12 @@ export interface DiscoveryCandidate {
   spotifyTrackId: string
   spotifyUri: string
   trackName: string
+  artistId?: string
   artistName: string
+  albumId?: string
+  albumUri?: string
   albumName?: string
+  releaseDate?: string
   imageUrl?: string
   spotifyUrl?: string
   durationMs?: number
@@ -47,21 +63,61 @@ export interface DiscoveryCandidate {
   seedLabels: string[]
   score: number
   reason: string
+  relationshipKind: DiscoveryRelationshipKind
   isNewArtist: boolean
+  isAnchor: boolean
   decision: DiscoveryFeedbackStatus
 }
 
 export interface DiscoverySession {
   id: number
   createdAt: string
-  mode: DiscoveryMode
+  kind: DiscoverySessionKind
+  mode: DiscoverySessionMode
   targetCount: number
   seeds: DiscoverySeed[]
+  focusArtist?: {
+    id: string
+    name: string
+    spotifyUri: string
+    spotifyUrl?: string
+    imageUrl?: string
+  }
   playlistId?: string
   playlistName?: string
   playlistUrl?: string
   savedAt?: string
   candidates: DiscoveryCandidate[]
+}
+
+export interface ArtistDiveArtistOption {
+  id: string
+  name: string
+  spotifyUri: string
+  spotifyUrl?: string
+  imageUrl?: string
+  events: number
+  activeDays: number
+  distinctTracks: number
+  topTwoShare: number
+  topItemSignal: boolean
+  lovedTrackSignal: boolean
+  score: number
+}
+
+export interface ArtistDiveOptionsData {
+  coverage: {
+    activeDays: number
+    requiredActiveDays: number
+    ready: boolean
+  }
+  suggestions: ArtistDiveArtistOption[]
+  items: ArtistDiveArtistOption[]
+}
+
+export interface ArtistDiveProfileData {
+  artist: ArtistDiveArtistOption
+  seeds: DiscoverySeed[]
 }
 
 export interface DiscoveryStatus {
@@ -235,6 +291,79 @@ export interface TrendsData {
   insights: TrendInsight[]
   heatmap: Array<{ day: number; hour: number; events: number }>
   eventCount: number
+}
+
+export interface RecordsAppearance {
+  type: DetailEntityType
+  id: string
+  name: string
+  spotifyUri: string
+  spotifyUrl?: string
+  imageUrl?: string
+  detail?: string
+  firstPlayed: string
+  events: number
+}
+
+export interface RecordsData {
+  source: 'observed'
+  rediscoveryGapDays: number
+  summary: {
+    totalEvents: number
+    activeDays: number
+    firstEvent: string | null
+    latestEvent: string | null
+    bestDay: {
+      day: string
+      events: number
+      tiedDays: number
+    } | null
+  }
+  streaks: {
+    current: {
+      days: number
+      startDay: string | null
+      endDay: string | null
+      state: 'active' | 'grace' | 'ended'
+    }
+    longest: {
+      days: number
+      startDay: string | null
+      endDay: string | null
+    }
+  }
+  milestones: {
+    achieved: Array<{ value: number; reachedAt: string }>
+    next: {
+      value: number
+      remaining: number
+      progress: number
+    } | null
+  }
+  rediscoveries: Array<{
+    eventId: number
+    returnedAt: string
+    previousPlayedAt: string
+    gapDays: number
+    artistId: string
+    artistName: string
+    spotifyUri: string
+    spotifyUrl?: string
+    trackId: string
+    trackName: string
+    imageUrl?: string
+  }>
+  firstAppearances: {
+    tracks: RecordsAppearance[]
+    artists: RecordsAppearance[]
+    albums: RecordsAppearance[]
+  }
+  verifiedListening: {
+    importBatchCount: number
+    totalMsPlayed: number
+    streamCount: number
+    highestDay: { day: string; msPlayed: number } | null
+  } | null
 }
 
 export interface HealthData {

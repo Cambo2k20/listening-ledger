@@ -3,9 +3,12 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { DatabaseSync } from 'node:sqlite'
 import type {
+  ArtistCatalogTrack,
+  ArtistDiveArtistOption,
   DiscoveryFeedbackStatus,
-  DiscoveryMode,
   DiscoverySeed,
+  DiscoverySessionKind,
+  DiscoverySessionMode,
   DiscoverySessionRecord,
   RankedDiscoveryCandidate,
   SpotifyTrack,
@@ -14,6 +17,7 @@ import type {
   TrendInsight,
 } from './types.ts'
 import { buildTrendInsights } from './lib/trends.ts'
+import { underexploredArtistScore } from './lib/artist-dive.ts'
 import {
   discoveryTrackKey,
   normalizeDiscoveryText,
@@ -152,9 +156,11 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS discovery_sessions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'related_tracks',
     mode TEXT NOT NULL,
     target_count INTEGER NOT NULL,
     seed_json TEXT NOT NULL,
+    focus_artist_json TEXT,
     playlist_id TEXT,
     playlist_name TEXT,
     playlist_url TEXT,
@@ -168,8 +174,12 @@ db.exec(`
     spotify_track_id TEXT NOT NULL,
     spotify_uri TEXT NOT NULL,
     track_name TEXT NOT NULL,
+    artist_id TEXT,
     artist_name TEXT NOT NULL,
+    album_id TEXT,
+    album_uri TEXT,
     album_name TEXT,
+    release_date TEXT,
     image_url TEXT,
     spotify_url TEXT,
     duration_ms INTEGER,
@@ -179,7 +189,9 @@ db.exec(`
     seed_labels_json TEXT NOT NULL DEFAULT '[]',
     score INTEGER NOT NULL,
     reason TEXT NOT NULL,
+    relationship_kind TEXT NOT NULL DEFAULT 'similar',
     is_new_artist INTEGER NOT NULL,
+    is_anchor INTEGER NOT NULL DEFAULT 0,
     decision TEXT NOT NULL DEFAULT 'neutral',
     UNIQUE (session_id, spotify_track_id),
     FOREIGN KEY (session_id) REFERENCES discovery_sessions(id) ON DELETE CASCADE
@@ -208,6 +220,12 @@ db.exec(`
     spotify_url TEXT,
     duration_ms INTEGER,
     resolved_at TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS artist_catalog_cache (
+    artist_id TEXT PRIMARY KEY,
+    fetched_at TEXT NOT NULL,
+    payload_json TEXT NOT NULL
   );
 `)
 
@@ -510,6 +528,32 @@ function periodClause(period: string, alias = 'pe'): { sql: string; params: stri
   return start
     ? { sql: `WHERE ${alias}.played_at >= ?`, params: [start] }
     : { sql: '', params: [] }
+}
+
+const discoverySessionColumns = db
+  .prepare('PRAGMA table_info(discovery_sessions)')
+  .all() as Array<{ name: string }>
+if (!discoverySessionColumns.some((column) => column.name === 'kind')) {
+  db.exec(
+    "ALTER TABLE discovery_sessions ADD COLUMN kind TEXT NOT NULL DEFAULT 'related_tracks'",
+  )
+}
+if (!discoverySessionColumns.some((column) => column.name === 'focus_artist_json')) {
+  db.exec('ALTER TABLE discovery_sessions ADD COLUMN focus_artist_json TEXT')
+}
+
+const discoveryCandidateMigrations = [
+  ['artist_id', 'TEXT'],
+  ['album_id', 'TEXT'],
+  ['album_uri', 'TEXT'],
+  ['release_date', 'TEXT'],
+  ['relationship_kind', "TEXT NOT NULL DEFAULT 'similar'"],
+  ['is_anchor', 'INTEGER NOT NULL DEFAULT 0'],
+] as const
+for (const [column, definition] of discoveryCandidateMigrations) {
+  if (!discoveryCandidateColumns.some((item) => item.name === column)) {
+    db.exec(`ALTER TABLE discovery_candidates ADD COLUMN ${column} ${definition}`)
+  }
 }
 
 export type DetailEntityType = 'track' | 'artist' | 'album'
@@ -844,6 +888,298 @@ export function getEntityDetail(
   }
 }
 
+const rediscoveryGapDays = 90
+
+function dayDistance(left: string, right: string): number {
+  return Math.round(
+    (Date.parse(`${right}T00:00:00Z`) - Date.parse(`${left}T00:00:00Z`)) /
+      86_400_000,
+  )
+}
+
+function getActiveDayStreaks(
+  days: Array<{ day: string; events: number }>,
+  now: Date,
+): {
+  current: {
+    days: number
+    startDay: string | null
+    endDay: string | null
+    state: 'active' | 'grace' | 'ended'
+  }
+  longest: { days: number; startDay: string | null; endDay: string | null }
+} {
+  if (!days.length) {
+    return {
+      current: { days: 0, startDay: null, endDay: null, state: 'ended' },
+      longest: { days: 0, startDay: null, endDay: null },
+    }
+  }
+
+  let longestDays = 1
+  let longestStart = days[0].day
+  let longestEnd = days[0].day
+  let runDays = 1
+  let runStart = days[0].day
+
+  for (let index = 1; index < days.length; index += 1) {
+    if (dayDistance(days[index - 1].day, days[index].day) === 1) {
+      runDays += 1
+    } else {
+      runDays = 1
+      runStart = days[index].day
+    }
+    if (runDays > longestDays) {
+      longestDays = runDays
+      longestStart = runStart
+      longestEnd = days[index].day
+    }
+  }
+
+  const latestDay = days.at(-1)?.day ?? null
+  const today = now.toISOString().slice(0, 10)
+  const daysSinceLatest = latestDay ? dayDistance(latestDay, today) : 2
+  if (!latestDay || daysSinceLatest > 1) {
+    return {
+      current: { days: 0, startDay: null, endDay: latestDay, state: 'ended' },
+      longest: {
+        days: longestDays,
+        startDay: longestStart,
+        endDay: longestEnd,
+      },
+    }
+  }
+
+  let currentDays = 1
+  let currentStart = latestDay
+  for (let index = days.length - 1; index > 0; index -= 1) {
+    if (dayDistance(days[index - 1].day, days[index].day) !== 1) break
+    currentDays += 1
+    currentStart = days[index - 1].day
+  }
+
+  return {
+    current: {
+      days: currentDays,
+      startDay: currentStart,
+      endDay: latestDay,
+      state: daysSinceLatest === 0 ? 'active' : 'grace',
+    },
+    longest: {
+      days: longestDays,
+      startDay: longestStart,
+      endDay: longestEnd,
+    },
+  }
+}
+
+function eventMilestoneThresholds(totalEvents: number): number[] {
+  const thresholds = [1]
+  for (let magnitude = 10; magnitude <= 1_000_000_000; magnitude *= 10) {
+    thresholds.push(magnitude, magnitude * 2.5, magnitude * 5)
+    if (magnitude > totalEvents && thresholds.at(-1)! > totalEvents) break
+  }
+  return thresholds
+}
+
+function getFirstAppearances(type: DetailEntityType): Record<string, unknown>[] {
+  if (type === 'track') {
+    return db.prepare(`
+      SELECT 'track' AS type, t.id, t.name, t.uri AS spotifyUri,
+        t.spotify_url AS spotifyUrl, al.image_url AS imageUrl,
+        MIN(pe.played_at) AS firstPlayed, COUNT(*) AS events,
+        (
+          SELECT GROUP_CONCAT(ar2.name, ', ')
+          FROM track_artists ta2
+          JOIN artists ar2 ON ar2.id = ta2.artist_id
+          WHERE ta2.track_id = t.id
+        ) AS detail
+      FROM play_events pe
+      JOIN tracks t ON t.id = pe.track_id
+      LEFT JOIN albums al ON al.id = t.album_id
+      GROUP BY t.id
+      ORDER BY firstPlayed DESC, t.name
+      LIMIT 8
+    `).all() as Record<string, unknown>[]
+  }
+
+  if (type === 'artist') {
+    return db.prepare(`
+      SELECT 'artist' AS type, ar.id, ar.name, ar.uri AS spotifyUri,
+        ar.spotify_url AS spotifyUrl, MIN(pe.played_at) AS firstPlayed,
+        COUNT(*) AS events,
+        (
+          SELECT al2.image_url
+          FROM play_events pe2
+          JOIN tracks t2 ON t2.id = pe2.track_id
+          LEFT JOIN albums al2 ON al2.id = t2.album_id
+          JOIN track_artists ta2
+            ON ta2.track_id = t2.id AND ta2.position = 0
+          WHERE ta2.artist_id = ar.id
+          ORDER BY pe2.played_at, pe2.id
+          LIMIT 1
+        ) AS imageUrl,
+        'First heard on ' || (
+          SELECT t2.name
+          FROM play_events pe2
+          JOIN tracks t2 ON t2.id = pe2.track_id
+          JOIN track_artists ta2
+            ON ta2.track_id = t2.id AND ta2.position = 0
+          WHERE ta2.artist_id = ar.id
+          ORDER BY pe2.played_at, pe2.id
+          LIMIT 1
+        ) AS detail
+      FROM play_events pe
+      JOIN track_artists ta
+        ON ta.track_id = pe.track_id AND ta.position = 0
+      JOIN artists ar ON ar.id = ta.artist_id
+      GROUP BY ar.id
+      ORDER BY firstPlayed DESC, ar.name
+      LIMIT 8
+    `).all() as Record<string, unknown>[]
+  }
+
+  return db.prepare(`
+    SELECT 'album' AS type, al.id, al.name, al.uri AS spotifyUri,
+      al.spotify_url AS spotifyUrl, al.image_url AS imageUrl,
+      MIN(pe.played_at) AS firstPlayed, COUNT(*) AS events,
+      'First heard via ' || (
+        SELECT ar2.name
+        FROM play_events pe2
+        JOIN tracks t2 ON t2.id = pe2.track_id
+        JOIN track_artists ta2
+          ON ta2.track_id = t2.id AND ta2.position = 0
+        JOIN artists ar2 ON ar2.id = ta2.artist_id
+        WHERE t2.album_id = al.id
+        ORDER BY pe2.played_at, pe2.id
+        LIMIT 1
+      ) AS detail
+    FROM play_events pe
+    JOIN tracks t ON t.id = pe.track_id
+    JOIN albums al ON al.id = t.album_id
+    GROUP BY al.id
+    ORDER BY firstPlayed DESC, al.name
+    LIMIT 8
+  `).all() as Record<string, unknown>[]
+}
+
+export function getRecordsAndMilestones(now = new Date()): Record<string, unknown> {
+  const daily = db.prepare(`
+    SELECT date(played_at) AS day, COUNT(*) AS events
+    FROM play_events
+    GROUP BY date(played_at)
+    ORDER BY day
+  `).all() as Array<{ day: string; events: number }>
+  const eventRows = db.prepare(`
+    SELECT played_at AS playedAt
+    FROM play_events
+    ORDER BY played_at, id
+  `).all() as Array<{ playedAt: string }>
+  const totalEvents = eventRows.length
+  const bestEventCount = Math.max(0, ...daily.map((item) => Number(item.events)))
+  const bestDays = daily.filter(
+    (item) => Number(item.events) === bestEventCount && bestEventCount > 0,
+  )
+  const bestDay = bestDays.at(-1)
+  const streaks = getActiveDayStreaks(daily, now)
+  const thresholds = eventMilestoneThresholds(totalEvents)
+  const achieved = thresholds
+    .filter((value) => value <= totalEvents)
+    .map((value) => ({ value, reachedAt: eventRows[value - 1].playedAt }))
+  const nextValue = thresholds.find((value) => value > totalEvents) ?? null
+
+  const rediscoveries = db.prepare(`
+    WITH artist_events AS (
+      SELECT pe.id AS eventId, pe.played_at AS returnedAt,
+        ar.id AS artistId, ar.name AS artistName, ar.uri AS spotifyUri,
+        ar.spotify_url AS spotifyUrl, t.id AS trackId, t.name AS trackName,
+        al.image_url AS imageUrl,
+        LAG(pe.played_at) OVER (
+          PARTITION BY ar.id ORDER BY pe.played_at, pe.id
+        ) AS previousPlayedAt
+      FROM play_events pe
+      JOIN tracks t ON t.id = pe.track_id
+      LEFT JOIN albums al ON al.id = t.album_id
+      JOIN track_artists ta
+        ON ta.track_id = t.id AND ta.position = 0
+      JOIN artists ar ON ar.id = ta.artist_id
+    ), artist_gaps AS (
+      SELECT *, CAST(
+        julianday(returnedAt) - julianday(previousPlayedAt) AS INTEGER
+      ) AS gapDays
+      FROM artist_events
+      WHERE previousPlayedAt IS NOT NULL
+    )
+    SELECT * FROM artist_gaps
+    WHERE gapDays >= ?
+    ORDER BY returnedAt DESC, artistName
+    LIMIT 8
+  `).all(rediscoveryGapDays) as Record<string, unknown>[]
+
+  const importBatchCount = Number(
+    (db.prepare('SELECT COUNT(*) AS count FROM import_batches').get() as {
+      count: number
+    }).count,
+  )
+  let verifiedListening: Record<string, unknown> | null = null
+  if (importBatchCount > 0) {
+    const totals = db.prepare(`
+      SELECT COALESCE(SUM(ms_played), 0) AS totalMsPlayed,
+        SUM(CASE WHEN ms_played >= 30000 THEN 1 ELSE 0 END) AS streamCount
+      FROM verified_streams
+    `).get() as { totalMsPlayed: number; streamCount: number }
+    const highestDay = db.prepare(`
+      SELECT date(played_at) AS day, SUM(ms_played) AS msPlayed
+      FROM verified_streams
+      GROUP BY date(played_at)
+      ORDER BY msPlayed DESC, day DESC
+      LIMIT 1
+    `).get() as { day: string; msPlayed: number } | undefined
+    verifiedListening = {
+      importBatchCount,
+      totalMsPlayed: Number(totals.totalMsPlayed),
+      streamCount: Number(totals.streamCount),
+      highestDay: highestDay ?? null,
+    }
+  }
+
+  return {
+    source: 'observed',
+    rediscoveryGapDays,
+    summary: {
+      totalEvents,
+      activeDays: daily.length,
+      firstEvent: eventRows[0]?.playedAt ?? null,
+      latestEvent: eventRows.at(-1)?.playedAt ?? null,
+      bestDay: bestDay
+        ? {
+            day: bestDay.day,
+            events: Number(bestDay.events),
+            tiedDays: bestDays.length,
+          }
+        : null,
+    },
+    streaks,
+    milestones: {
+      achieved,
+      next: nextValue
+        ? {
+            value: nextValue,
+            remaining: nextValue - totalEvents,
+            progress: totalEvents / nextValue,
+          }
+        : null,
+    },
+    rediscoveries,
+    firstAppearances: {
+      tracks: getFirstAppearances('track'),
+      artists: getFirstAppearances('artist'),
+      albums: getFirstAppearances('album'),
+    },
+    verifiedListening,
+  }
+}
+
 export function getDashboard(period = '30d'): Record<string, unknown> {
   const filter = periodClause(period)
   const total = db
@@ -1102,6 +1438,255 @@ export function getLedgerDiscoverySeeds(
   return rows.map((row) => ({ ...row, source: 'ledger' }))
 }
 
+const artistDiveRequiredActiveDays = 14
+
+function queryArtistDiveArtists(
+  query = '',
+  artistId?: string,
+  limit = 30,
+): ArtistDiveArtistOption[] {
+  const safeLimit = Math.min(Math.max(Math.floor(limit), 1), 100)
+  const search = `%${query.trim()}%`
+  const rows = db.prepare(`
+    WITH track_counts AS (
+      SELECT ar.id AS artistId, t.id AS trackId,
+        COUNT(pe.id) AS trackEvents, MAX(pe.played_at) AS lastPlayed
+      FROM play_events pe
+      JOIN tracks t ON t.id = pe.track_id
+      JOIN track_artists ta
+        ON ta.track_id = t.id AND ta.position = 0
+      JOIN artists ar ON ar.id = ta.artist_id
+      GROUP BY ar.id, t.id
+    ), ranked_tracks AS (
+      SELECT *, ROW_NUMBER() OVER (
+        PARTITION BY artistId ORDER BY trackEvents DESC, lastPlayed DESC, trackId
+      ) AS trackRank
+      FROM track_counts
+    ), artist_rollup AS (
+      SELECT artistId, SUM(trackEvents) AS events,
+        COUNT(*) AS distinctTracks,
+        SUM(CASE WHEN trackRank <= 2 THEN trackEvents ELSE 0 END) AS topTwoEvents,
+        MAX(lastPlayed) AS latestEvent
+      FROM ranked_tracks
+      GROUP BY artistId
+    ), day_rollup AS (
+      SELECT ta.artist_id AS artistId,
+        COUNT(DISTINCT date(pe.played_at)) AS activeDays
+      FROM play_events pe
+      JOIN track_artists ta
+        ON ta.track_id = pe.track_id AND ta.position = 0
+      GROUP BY ta.artist_id
+    )
+    SELECT ar.id, ar.name, ar.uri AS spotifyUri,
+      ar.spotify_url AS spotifyUrl, rollup.events,
+      rollup.distinctTracks, day_rollup.activeDays,
+      rollup.topTwoEvents, rollup.latestEvent,
+      EXISTS (
+        SELECT 1 FROM top_snapshots ts
+        WHERE ts.entity_type = 'artist' AND ts.entity_id = ar.id
+      ) AS topItemSignal,
+      EXISTS (
+        SELECT 1
+        FROM discovery_feedback df
+        JOIN tracks feedback_t ON feedback_t.id = df.spotify_track_id
+        JOIN track_artists feedback_ta
+          ON feedback_ta.track_id = feedback_t.id AND feedback_ta.position = 0
+        WHERE feedback_ta.artist_id = ar.id AND df.status = 'love'
+      ) AS lovedTrackSignal,
+      (
+        SELECT image_al.image_url
+        FROM play_events image_pe
+        JOIN tracks image_t ON image_t.id = image_pe.track_id
+        LEFT JOIN albums image_al ON image_al.id = image_t.album_id
+        JOIN track_artists image_ta
+          ON image_ta.track_id = image_t.id AND image_ta.position = 0
+        WHERE image_ta.artist_id = ar.id AND image_al.image_url IS NOT NULL
+        GROUP BY image_al.id
+        ORDER BY COUNT(*) DESC, MAX(image_pe.played_at) DESC
+        LIMIT 1
+      ) AS imageUrl
+    FROM artist_rollup rollup
+    JOIN artists ar ON ar.id = rollup.artistId
+    JOIN day_rollup ON day_rollup.artistId = rollup.artistId
+    WHERE (? IS NULL OR ar.id = ?)
+      AND (? = '%%' OR ar.name LIKE ?)
+    ORDER BY rollup.events DESC, rollup.latestEvent DESC, ar.name
+    LIMIT ?
+  `).all(
+    artistId ?? null,
+    artistId ?? null,
+    search,
+    search,
+    safeLimit,
+  ) as Array<{
+    id: string
+    name: string
+    spotifyUri: string
+    spotifyUrl?: string
+    imageUrl?: string
+    events: number
+    activeDays: number
+    distinctTracks: number
+    topTwoEvents: number
+    topItemSignal: number
+    lovedTrackSignal: number
+  }>
+
+  return rows.map((row) => {
+    const topTwoShare = row.events ? row.topTwoEvents / row.events : 0
+    const values = {
+      events: Number(row.events),
+      activeDays: Number(row.activeDays),
+      distinctTracks: Number(row.distinctTracks),
+      topTwoShare,
+      topItemSignal: Boolean(row.topItemSignal),
+      lovedTrackSignal: Boolean(row.lovedTrackSignal),
+    }
+    return {
+      id: row.id,
+      name: row.name,
+      spotifyUri: row.spotifyUri,
+      spotifyUrl: row.spotifyUrl,
+      imageUrl: row.imageUrl,
+      ...values,
+      score: underexploredArtistScore(values),
+    }
+  })
+}
+
+export function getArtistDiveOptions(
+  query = '',
+  limit = 30,
+): {
+  coverage: { activeDays: number; requiredActiveDays: number; ready: boolean }
+  suggestions: ArtistDiveArtistOption[]
+  items: ArtistDiveArtistOption[]
+} {
+  const coverageActiveDays = Number(
+    (
+      db
+        .prepare('SELECT COUNT(DISTINCT date(played_at)) AS count FROM play_events')
+        .get() as { count: number }
+    ).count,
+  )
+  const items = queryArtistDiveArtists(query, undefined, limit)
+  const ready = coverageActiveDays >= artistDiveRequiredActiveDays
+  const suggestions = ready
+    ? queryArtistDiveArtists('', undefined, 100)
+        .filter(
+          (artist) =>
+            artist.events >= 6 &&
+            artist.activeDays >= 2 &&
+            artist.distinctTracks >= 2 &&
+            artist.distinctTracks <= 5 &&
+            artist.topTwoShare >= 0.6,
+        )
+        .sort((left, right) => right.score - left.score || right.events - left.events)
+        .slice(0, 6)
+    : []
+  return {
+    coverage: {
+      activeDays: coverageActiveDays,
+      requiredActiveDays: artistDiveRequiredActiveDays,
+      ready,
+    },
+    suggestions,
+    items,
+  }
+}
+
+export function getArtistDiveArtist(
+  artistId: string,
+): ArtistDiveArtistOption | null {
+  return queryArtistDiveArtists('', artistId, 1)[0] ?? null
+}
+
+export function getArtistDiveSeeds(
+  artistId: string,
+  limit = 20,
+): DiscoverySeed[] {
+  const safeLimit = Math.min(Math.max(Math.floor(limit), 1), 50)
+  const rows = db.prepare(`
+    SELECT t.id AS spotifyTrackId, t.uri AS spotifyUri,
+      t.name AS trackName, ar.id AS artistId, ar.name AS artistName,
+      al.id AS albumId, al.uri AS albumUri, al.name AS albumName,
+      al.image_url AS imageUrl, t.spotify_url AS spotifyUrl,
+      COUNT(pe.id) AS events,
+      MAX(CASE WHEN df.status = 'love' THEN 1 ELSE 0 END) AS loved
+    FROM play_events pe
+    JOIN tracks t ON t.id = pe.track_id
+    JOIN track_artists ta
+      ON ta.track_id = t.id AND ta.position = 0
+    JOIN artists ar ON ar.id = ta.artist_id
+    LEFT JOIN albums al ON al.id = t.album_id
+    LEFT JOIN discovery_feedback df ON df.spotify_track_id = t.id
+    WHERE ar.id = ?
+    GROUP BY t.id
+    ORDER BY loved DESC, events DESC, MAX(pe.played_at) DESC, t.name
+    LIMIT ?
+  `).all(artistId, safeLimit) as Array<
+    Omit<DiscoverySeed, 'source'> & { loved: number }
+  >
+  return rows.map((row) => ({
+    spotifyTrackId: row.spotifyTrackId,
+    spotifyUri: row.spotifyUri,
+    trackName: row.trackName,
+    artistId: row.artistId,
+    artistName: row.artistName,
+    albumId: row.albumId,
+    albumUri: row.albumUri,
+    albumName: row.albumName,
+    imageUrl: row.imageUrl,
+    spotifyUrl: row.spotifyUrl,
+    events: row.events,
+    source: 'ledger',
+  }))
+}
+
+export function getArtistKnownAlbumIds(artistId: string): Set<string> {
+  const rows = db.prepare(`
+    SELECT DISTINCT t.album_id AS albumId
+    FROM tracks t
+    JOIN track_artists ta
+      ON ta.track_id = t.id AND ta.position = 0
+    WHERE ta.artist_id = ? AND t.album_id IS NOT NULL
+  `).all(artistId) as Array<{ albumId: string }>
+  return new Set(rows.map((row) => row.albumId))
+}
+
+export function getCachedArtistCatalog(
+  artistId: string,
+  maxAgeMs = 7 * 86_400_000,
+  now = Date.now(),
+): ArtistCatalogTrack[] | null {
+  const row = db.prepare(`
+    SELECT fetched_at AS fetchedAt, payload_json AS payloadJson
+    FROM artist_catalog_cache
+    WHERE artist_id = ?
+  `).get(artistId) as { fetchedAt: string; payloadJson: string } | undefined
+  if (!row || now - Date.parse(row.fetchedAt) > maxAgeMs) return null
+  try {
+    const parsed = JSON.parse(row.payloadJson) as ArtistCatalogTrack[]
+    return Array.isArray(parsed) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+export function saveCachedArtistCatalog(
+  artistId: string,
+  tracks: ArtistCatalogTrack[],
+  fetchedAt = new Date().toISOString(),
+): void {
+  db.prepare(`
+    INSERT INTO artist_catalog_cache (artist_id, fetched_at, payload_json)
+    VALUES (?, ?, ?)
+    ON CONFLICT(artist_id) DO UPDATE SET
+      fetched_at = excluded.fetched_at,
+      payload_json = excluded.payload_json
+  `).run(artistId, fetchedAt, JSON.stringify(tracks))
+}
+
 export function getKnownDiscoveryCatalog(): {
   trackIds: Set<string>
   trackKeys: Set<string>
@@ -1228,20 +1813,27 @@ export function saveCachedDiscoveryTrack(
 }
 
 export function createDiscoverySession(
-  mode: DiscoveryMode,
+  mode: DiscoverySessionMode,
   targetCount: number,
   seeds: DiscoverySeed[],
+  options: {
+    kind?: DiscoverySessionKind
+    focusArtist?: DiscoverySessionRecord['focusArtist']
+  } = {},
 ): number {
   const result = db
     .prepare(`
-      INSERT INTO discovery_sessions (created_at, mode, target_count, seed_json)
-      VALUES (?, ?, ?, ?)
+      INSERT INTO discovery_sessions
+        (created_at, kind, mode, target_count, seed_json, focus_artist_json)
+      VALUES (?, ?, ?, ?, ?, ?)
     `)
     .run(
       new Date().toISOString(),
+      options.kind ?? 'related_tracks',
       mode,
       targetCount,
       JSON.stringify(seeds),
+      options.focusArtist ? JSON.stringify(options.focusArtist) : null,
     )
   return Number(result.lastInsertRowid)
 }
@@ -1253,10 +1845,11 @@ export function saveDiscoveryCandidates(
   const statement = db.prepare(`
     INSERT INTO discovery_candidates
       (session_id, position, spotify_track_id, spotify_uri, track_name,
-       artist_name, album_name, image_url, spotify_url, duration_ms,
+       artist_id, artist_name, album_id, album_uri, album_name, release_date,
+       image_url, spotify_url, duration_ms,
        similarity, seed_hits, seed_keys_json, seed_labels_json, score, reason,
-       is_new_artist, decision)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       relationship_kind, is_new_artist, is_anchor, decision)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
   db.exec('BEGIN')
   try {
@@ -1267,8 +1860,12 @@ export function saveDiscoveryCandidates(
         candidate.spotifyTrackId,
         candidate.spotifyUri,
         candidate.trackName,
+        candidate.artistId ?? null,
         candidate.artistName,
+        candidate.albumId ?? null,
+        candidate.albumUri ?? null,
         candidate.albumName ?? null,
+        candidate.releaseDate ?? null,
         candidate.imageUrl ?? null,
         candidate.spotifyUrl ?? null,
         candidate.durationMs ?? null,
@@ -1278,7 +1875,9 @@ export function saveDiscoveryCandidates(
         JSON.stringify(candidate.seedLabels),
         candidate.score,
         candidate.reason,
+        candidate.relationshipKind,
         candidate.isNewArtist ? 1 : 0,
+        candidate.isAnchor ? 1 : 0,
         candidate.decision,
       )
     })
@@ -1296,8 +1895,9 @@ export function getDiscoverySession(
     id
       ? db
           .prepare(`
-            SELECT id, created_at AS createdAt, mode,
+            SELECT id, created_at AS createdAt, kind, mode,
               target_count AS targetCount, seed_json AS seedJson,
+              focus_artist_json AS focusArtistJson,
               playlist_id AS playlistId, playlist_name AS playlistName,
               playlist_url AS playlistUrl, saved_at AS savedAt
             FROM discovery_sessions WHERE id = ?
@@ -1305,8 +1905,9 @@ export function getDiscoverySession(
           .get(id)
       : db
           .prepare(`
-            SELECT id, created_at AS createdAt, mode,
+            SELECT id, created_at AS createdAt, kind, mode,
               target_count AS targetCount, seed_json AS seedJson,
+              focus_artist_json AS focusArtistJson,
               playlist_id AS playlistId, playlist_name AS playlistName,
               playlist_url AS playlistUrl, saved_at AS savedAt
             FROM discovery_sessions ORDER BY id DESC LIMIT 1
@@ -1316,9 +1917,11 @@ export function getDiscoverySession(
     | {
         id: number
         createdAt: string
-        mode: DiscoveryMode
+        kind: DiscoverySessionKind
+        mode: DiscoverySessionMode
         targetCount: number
         seedJson: string
+        focusArtistJson?: string
         playlistId?: string
         playlistName?: string
         playlistUrl?: string
@@ -1330,11 +1933,14 @@ export function getDiscoverySession(
     .prepare(`
       SELECT id, position, spotify_track_id AS spotifyTrackId,
         spotify_uri AS spotifyUri, track_name AS trackName,
-        artist_name AS artistName, album_name AS albumName,
+        artist_id AS artistId, artist_name AS artistName,
+        album_id AS albumId, album_uri AS albumUri,
+        album_name AS albumName, release_date AS releaseDate,
         image_url AS imageUrl, spotify_url AS spotifyUrl,
         duration_ms AS durationMs, similarity AS match,
         seed_keys_json AS seedKeysJson, seed_labels_json AS seedLabelsJson,
-        score, reason, is_new_artist AS isNewArtist, decision
+        score, reason, relationship_kind AS relationshipKind,
+        is_new_artist AS isNewArtist, is_anchor AS isAnchor, decision
       FROM discovery_candidates
       WHERE session_id = ?
       ORDER BY position
@@ -1345,8 +1951,12 @@ export function getDiscoverySession(
     spotifyTrackId: string
     spotifyUri: string
     trackName: string
+    artistId?: string
     artistName: string
+    albumId?: string
+    albumUri?: string
     albumName?: string
+    releaseDate?: string
     imageUrl?: string
     spotifyUrl?: string
     durationMs?: number
@@ -1355,18 +1965,34 @@ export function getDiscoverySession(
     seedLabelsJson: string
     score: number
     reason: string
+    relationshipKind: RankedDiscoveryCandidate['relationshipKind']
     isNewArtist: number
+    isAnchor: number
     decision: DiscoveryFeedbackStatus
   }>
   return {
-    ...session,
+    id: session.id,
+    createdAt: session.createdAt,
+    kind: session.kind,
+    mode: session.mode,
+    targetCount: session.targetCount,
+    playlistId: session.playlistId,
+    playlistName: session.playlistName,
+    playlistUrl: session.playlistUrl,
+    savedAt: session.savedAt,
     seeds: JSON.parse(session.seedJson) as DiscoverySeed[],
-    candidates: candidates.map(({ seedKeysJson, seedLabelsJson, ...candidate }) => ({
-      ...candidate,
-      isNewArtist: Boolean(candidate.isNewArtist),
-      seedKeys: JSON.parse(seedKeysJson) as string[],
-      seedLabels: JSON.parse(seedLabelsJson) as string[],
-    })),
+    focusArtist: session.focusArtistJson
+      ? (JSON.parse(session.focusArtistJson) as DiscoverySessionRecord['focusArtist'])
+      : undefined,
+    candidates: candidates.map(
+      ({ seedKeysJson, seedLabelsJson, ...candidate }) => ({
+        ...candidate,
+        isNewArtist: Boolean(candidate.isNewArtist),
+        isAnchor: Boolean(candidate.isAnchor),
+        seedKeys: JSON.parse(seedKeysJson) as string[],
+        seedLabels: JSON.parse(seedLabelsJson) as string[],
+      }),
+    ),
   }
 }
 
@@ -1377,14 +2003,28 @@ export function setDiscoveryFeedback(
   const candidate = db
     .prepare(`
       SELECT spotify_track_id AS spotifyTrackId, track_name AS trackName,
-        artist_name AS artistName
+        artist_name AS artistName, is_anchor AS isAnchor,
+        session_id AS sessionId
       FROM discovery_candidates WHERE id = ?
     `)
     .get(candidateId) as
-    | { spotifyTrackId: string; trackName: string; artistName: string }
+    | {
+        spotifyTrackId: string
+        trackName: string
+        artistName: string
+        isAnchor: number
+        sessionId: number
+      }
     | undefined
   if (!candidate) throw new Error('Discovery candidate not found.')
   const key = discoveryTrackKey(candidate.artistName, candidate.trackName)
+  if (candidate.isAnchor) {
+    db.prepare('UPDATE discovery_candidates SET decision = ? WHERE id = ?').run(
+      status,
+      candidateId,
+    )
+    return
+  }
   db.prepare(`
     UPDATE discovery_candidates SET decision = ? WHERE spotify_track_id = ?
   `).run(status, candidate.spotifyTrackId)

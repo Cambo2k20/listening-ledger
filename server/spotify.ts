@@ -15,6 +15,7 @@ import {
   startSyncRun,
 } from './db.ts'
 import { deduplicatePlaybackEvents } from './lib/dedup.ts'
+import { normalizedAlbumKey } from './lib/artist-dive.ts'
 import { normalizeDiscoveryText } from './lib/discovery-ranking.ts'
 import {
   clampPlaybackPosition,
@@ -31,6 +32,7 @@ import {
   SYNC_LOCK_TTL_MS,
 } from './lib/sync-schedule.ts'
 import type {
+  ArtistCatalogTrack,
   DiscoverySeed,
   SpotifyPlaybackDevice,
   SpotifyPlaybackState,
@@ -297,8 +299,12 @@ function spotifyTrackToSeed(
     spotifyTrackId: track.id,
     spotifyUri: track.uri,
     trackName: track.name,
+    artistId: track.artists[0]?.id,
     artistName: track.artists[0]?.name ?? 'Unknown artist',
+    albumId: track.album.id,
+    albumUri: track.album.uri,
     albumName: track.album.name,
+    releaseDate: track.album.release_date,
     imageUrl,
     spotifyUrl: track.external_urls?.spotify,
     source,
@@ -351,6 +357,139 @@ export async function getLikedSpotifyTracks(): Promise<DiscoverySeed[]> {
     items: Array<{ track: SpotifyTrack }>
   }>('/v1/me/tracks?limit=50')
   return payload.items.map(({ track }) => spotifyTrackToSeed(track, 'liked'))
+}
+
+interface SpotifyCatalogAlbum {
+  id: string
+  name: string
+  uri: string
+  album_type: 'album' | 'single' | 'compilation'
+  album_group?: 'album' | 'single' | 'compilation' | 'appears_on'
+  release_date?: string
+  images?: Array<{ url: string; height?: number; width?: number }>
+  external_urls?: { spotify?: string }
+  artists: Array<{ id: string; name: string; uri: string }>
+}
+
+interface SpotifyCatalogAlbumTrack {
+  id: string
+  name: string
+  uri: string
+  duration_ms: number
+  is_playable?: boolean
+  artists: Array<{ id: string; name: string; uri: string }>
+  external_urls?: { spotify?: string }
+}
+
+interface SpotifyPage<T> {
+  items: T[]
+  next: string | null
+}
+
+function preferCatalogAlbum(
+  candidate: SpotifyCatalogAlbum,
+  current: SpotifyCatalogAlbum,
+): boolean {
+  if (candidate.album_type !== current.album_type) {
+    return candidate.album_type === 'album'
+  }
+  return (candidate.release_date ?? '9999') < (current.release_date ?? '9999')
+}
+
+function preferCatalogTrack(
+  candidate: ArtistCatalogTrack,
+  current: ArtistCatalogTrack,
+): boolean {
+  if (candidate.albumType !== current.albumType) {
+    return candidate.albumType === 'album'
+  }
+  return (candidate.releaseDate ?? '9999') < (current.releaseDate ?? '9999')
+}
+
+export async function getSpotifyArtistCatalog(
+  artistId: string,
+): Promise<ArtistCatalogTrack[]> {
+  const trimmedArtistId = artistId.trim()
+  if (!trimmedArtistId) throw new Error('A Spotify artist ID is required.')
+
+  const albumPages: SpotifyCatalogAlbum[] = []
+  let albumPage: string | null =
+    `/v1/artists/${encodeURIComponent(trimmedArtistId)}/albums?include_groups=album,single&limit=10&offset=0`
+  let albumPageCount = 0
+  while (albumPage && albumPageCount < 50) {
+    const payload: SpotifyPage<SpotifyCatalogAlbum> =
+      await spotifyRequest<SpotifyPage<SpotifyCatalogAlbum>>(albumPage)
+    albumPages.push(...payload.items)
+    albumPage = payload.next
+    albumPageCount += 1
+  }
+
+  const albumsByName = new Map<string, SpotifyCatalogAlbum>()
+  for (const album of albumPages) {
+    if (!['album', 'single'].includes(album.album_type)) continue
+    if (album.artists[0]?.id !== trimmedArtistId) continue
+    const key = normalizedAlbumKey(album.name) || album.id
+    const current = albumsByName.get(key)
+    if (!current || preferCatalogAlbum(album, current)) {
+      albumsByName.set(key, album)
+    }
+  }
+
+  const tracksByKey = new Map<string, ArtistCatalogTrack>()
+  for (const album of albumsByName.values()) {
+    let trackPage: string | null =
+      `/v1/albums/${encodeURIComponent(album.id)}/tracks?limit=50&offset=0`
+    let trackPageCount = 0
+    while (trackPage && trackPageCount < 10) {
+      const payload: SpotifyPage<SpotifyCatalogAlbumTrack> =
+        await spotifyRequest<SpotifyPage<SpotifyCatalogAlbumTrack>>(trackPage)
+      for (const track of payload.items) {
+        const primaryArtist = track.artists[0]
+        if (
+          !track.id ||
+          !primaryArtist ||
+          primaryArtist.id !== trimmedArtistId ||
+          track.is_playable === false
+        ) {
+          continue
+        }
+        const imageUrl = [...(album.images ?? [])].sort(
+          (left, right) => (left.width ?? 0) - (right.width ?? 0),
+        )[0]?.url
+        const candidate: ArtistCatalogTrack = {
+          spotifyTrackId: track.id,
+          spotifyUri: track.uri,
+          trackName: track.name,
+          artistId: primaryArtist.id,
+          artistName: primaryArtist.name,
+          albumId: album.id,
+          albumUri: album.uri,
+          albumName: album.name,
+          releaseDate: album.release_date,
+          albumType: album.album_type === 'single' ? 'single' : 'album',
+          imageUrl,
+          spotifyUrl: track.external_urls?.spotify,
+          durationMs: track.duration_ms,
+          match: 0,
+          seedKeys: [],
+          seedLabels: [],
+        }
+        const key = `${normalizeDiscoveryText(primaryArtist.name)}::${normalizeDiscoveryText(track.name)}`
+        const current = tracksByKey.get(key)
+        if (!current || preferCatalogTrack(candidate, current)) {
+          tracksByKey.set(key, candidate)
+        }
+      }
+      trackPage = payload.next
+      trackPageCount += 1
+    }
+  }
+  return [...tracksByKey.values()].sort(
+    (left, right) =>
+      (left.releaseDate ?? '').localeCompare(right.releaseDate ?? '') ||
+      left.albumName.localeCompare(right.albumName) ||
+      left.trackName.localeCompare(right.trackName),
+  )
 }
 
 export async function createPrivateSpotifyPlaylist(

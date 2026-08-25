@@ -10,6 +10,7 @@ import {
   Radar,
   RefreshCw,
   Settings,
+  Trophy,
   X,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
@@ -23,6 +24,7 @@ const navigation = [
   { to: '/history', label: 'History', icon: History },
   { to: '/rankings', label: 'Rankings', icon: BarChart3 },
   { to: '/trends', label: 'Trends', icon: Activity },
+  { to: '/records', label: 'Records', icon: Trophy },
   { to: '/discover', label: 'Discover', icon: Radar },
   { to: '/health', label: 'Data health', icon: DatabaseZap },
   { to: '/settings', label: 'Settings', icon: Settings },
@@ -33,6 +35,7 @@ const pageNames: Record<string, string> = {
   '/history': 'Listening history',
   '/rankings': 'Your rankings',
   '/trends': 'Listening trends',
+  '/records': 'Records & milestones',
   '/discover': 'Discover music',
   '/health': 'Data health',
   '/settings': 'Settings',

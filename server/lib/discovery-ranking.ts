@@ -161,7 +161,15 @@ export function rankDiscoveryCandidates({
           ? 'This artist has not appeared in your ledger.'
           : 'A deeper cut from an artist already in your ledger.'
       }`
-      return { ...candidate, score, reason, isNewArtist, decision }
+      return {
+        ...candidate,
+        score,
+        reason,
+        relationshipKind: 'similar' as const,
+        isNewArtist,
+        isAnchor: false,
+        decision,
+      }
     })
     .sort(
       (left, right) =>

@@ -6,6 +6,7 @@ import {
   ExternalLink,
   History,
   Radio,
+  Sparkles,
 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
@@ -209,6 +210,14 @@ export default function EntityDetailScreen({
           </span>
         </div>
         <div className="detail-actions">
+          {data.type === 'artist' && (
+            <Link
+              className="button button--primary"
+              to={`/discover?view=artist&artist=${encodeURIComponent(data.entity.id)}`}
+            >
+              <Sparkles size={15} /> Build a deep dive
+            </Link>
+          )}
           <SpotifyDesktopButton
             spotifyUri={data.entity.spotifyUri}
             label={typeLabels[data.type].toLowerCase()}
