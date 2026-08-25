@@ -24,6 +24,11 @@ import type {
   DiscoverySession,
   DiscoveryStatus,
 } from '../types'
+import {
+  SpotifyDestinationLinks,
+  TrackPlayButton,
+  TrackPlayIcon,
+} from '../components/SpotifyActions'
 
 const sources: Array<{
   value: DiscoverySeedSource
@@ -306,26 +311,34 @@ export default function DiscoverScreen() {
               {seeds.map((seed) => {
                 const isSelected = selectedIds.has(seed.spotifyTrackId)
                 return (
-                  <button
-                    type="button"
+                  <div
+                    className={`seed-result-row ${isSelected ? 'selected' : ''}`}
                     key={seed.spotifyTrackId}
-                    className={isSelected ? 'selected' : ''}
-                    onClick={() => selectSeed(seed)}
-                    disabled={!isSelected && selected.length >= 5}
-                    aria-pressed={isSelected}
                   >
-                    {seed.imageUrl ? (
-                      <img src={seed.imageUrl} alt="" />
-                    ) : (
-                      <span className="art-placeholder"><Disc3 size={17} /></span>
-                    )}
-                    <span>
-                      <strong>{seed.trackName}</strong>
-                      <small>{seed.artistName}</small>
-                    </span>
-                    {seed.events ? <em>{seed.events} events</em> : null}
-                    <i>{isSelected ? <Check size={16} /> : '+'}</i>
-                  </button>
+                    <button
+                      type="button"
+                      className="seed-result-select"
+                      onClick={() => selectSeed(seed)}
+                      disabled={!isSelected && selected.length >= 5}
+                      aria-pressed={isSelected}
+                    >
+                      {seed.imageUrl ? (
+                        <img src={seed.imageUrl} alt="" />
+                      ) : (
+                        <span className="art-placeholder"><Disc3 size={17} /></span>
+                      )}
+                      <span>
+                        <strong>{seed.trackName}</strong>
+                        <small>{seed.artistName}</small>
+                      </span>
+                      {seed.events ? <em>{seed.events} events</em> : null}
+                      <i>{isSelected ? <Check size={16} /> : '+'}</i>
+                    </button>
+                    <TrackPlayIcon
+                      spotifyUri={seed.spotifyUri}
+                      trackName={seed.trackName}
+                    />
+                  </div>
                 )
               })}
             </div>
@@ -407,9 +420,16 @@ export default function DiscoverScreen() {
                 <div className="result-copy">
                   <div className="result-title-row">
                     <div>
-                      <a href={candidate.spotifyUrl} target="_blank" rel="noreferrer">
-                        {candidate.trackName} <ExternalLink size={12} />
-                      </a>
+                      <span className="track-title-actions">
+                        <TrackPlayButton spotifyUri={candidate.spotifyUri}>
+                          {candidate.trackName}
+                        </TrackPlayButton>
+                        <SpotifyDestinationLinks
+                          spotifyUri={candidate.spotifyUri}
+                          spotifyUrl={candidate.spotifyUrl}
+                          label={candidate.trackName}
+                        />
+                      </span>
                       <small>{candidate.artistName} · {candidate.albumName}</small>
                     </div>
                     <span className={candidate.isNewArtist ? 'new-artist' : 'deep-cut'}>

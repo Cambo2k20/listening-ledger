@@ -14,13 +14,15 @@ can be imported from Spotify's Extended Streaming History later.
 ## Current MVP
 
 - Spotify OAuth using Authorization Code with PKCE
-- Purpose-limited Spotify scopes for history, top items, liked-song seeds, and
-  creating private playlists
+- Purpose-limited Spotify scopes for history, top items, liked-song seeds,
+  private playlists, and Spotify Connect playback control
 - Local SQLite persistence and playback-event deduplication
 - Dashboard, history, rankings, trends, explainable music discovery, data
   health, and settings
 - Last.fm similar-track discovery matched back to playable Spotify tracks
 - Local Love, Reject, and Already Know feedback with review before playlist save
+- Persistent Spotify Connect controller with device transfer, transport,
+  position, and volume controls
 - JSON and CSV export
 - Honest observed-versus-verified status throughout the UI
 
@@ -57,9 +59,28 @@ On the next authorization, Spotify requests:
 - `user-top-read`
 - `user-library-read`
 - `playlist-modify-private`
+- `user-read-playback-state`
+- `user-modify-playback-state`
 
-The final scope only creates or updates private playlists after explicit review;
-it does not grant public-playlist access.
+Playlist access only creates or updates private playlists after explicit review;
+it does not grant public-playlist access. Playback access reads and controls the
+active Spotify Connect session. Audio remains in Spotify and Spotify Premium is
+required for playback-control endpoints.
+
+## Spotify Connect player
+
+The persistent player bar controls an available Spotify client, such as the
+Spotify desktop app. It does not embed or proxy Spotify audio. Track names and
+artwork start playback through Spotify Connect. Separate desktop and browser
+icons open each item in the installed Spotify app or Spotify Web Player.
+
+To make Spotify Web Player appear in the device selector, open it, start a track
+once, and then refresh Listening Ledger's device list. Spotify only returns
+clients it currently considers available Spotify Connect devices.
+
+Listening Ledger refreshes playback state every 10 seconds while the browser tab
+is visible and animates elapsed time locally between refreshes. This keeps the
+interface responsive without making a Web API request every second.
 
 ## Discovery Builder
 

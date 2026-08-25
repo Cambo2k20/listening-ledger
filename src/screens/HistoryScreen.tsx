@@ -4,6 +4,10 @@ import { EmptyState, PageIntro, Panel, Skeleton } from '../components/Ui'
 import { api } from '../lib/api'
 import { formatDateTime } from '../lib/format'
 import type { HistoryItem } from '../types'
+import {
+  SpotifyDestinationLinks,
+  TrackPlayButton,
+} from '../components/SpotifyActions'
 
 export default function HistoryScreen() {
   const [query, setQuery] = useState('')
@@ -58,9 +62,16 @@ export default function HistoryScreen() {
                   </span>
                 )}
                 <div className="history-track">
-                  <a href={item.spotifyUrl} target="_blank" rel="noreferrer">
-                    {item.trackName}
-                  </a>
+                  <span className="track-title-actions">
+                    <TrackPlayButton spotifyUri={item.spotifyUri}>
+                      {item.trackName}
+                    </TrackPlayButton>
+                    <SpotifyDestinationLinks
+                      spotifyUri={item.spotifyUri}
+                      spotifyUrl={item.spotifyUrl}
+                      label={item.trackName}
+                    />
+                  </span>
                   <small>{item.artists}</small>
                 </div>
                 <span className="history-album">{item.albumName}</span>
@@ -83,4 +94,3 @@ export default function HistoryScreen() {
     </>
   )
 }
-

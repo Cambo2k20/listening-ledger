@@ -528,7 +528,7 @@ export function getDashboard(period = '30d'): Record<string, unknown> {
   `).get() as { first: string | null; latest: string | null }
 
   const topTracks = db.prepare(`
-    SELECT t.id, t.name, t.spotify_url AS spotifyUrl,
+    SELECT t.id, t.name, t.uri AS spotifyUri, t.spotify_url AS spotifyUrl,
       al.name AS albumName, al.image_url AS imageUrl,
       GROUP_CONCAT(DISTINCT ar.name) AS artists,
       COUNT(*) AS events
@@ -544,7 +544,8 @@ export function getDashboard(period = '30d'): Record<string, unknown> {
   `).all(...filter.params)
 
   const topArtists = db.prepare(`
-    SELECT ar.id, ar.name, ar.spotify_url AS spotifyUrl, COUNT(*) AS events
+    SELECT ar.id, ar.name, ar.uri AS spotifyUri,
+      ar.spotify_url AS spotifyUrl, COUNT(*) AS events
     FROM play_events pe
     JOIN track_artists ta ON ta.track_id = pe.track_id AND ta.position = 0
     JOIN artists ar ON ar.id = ta.artist_id
@@ -584,7 +585,7 @@ export function getHistory(query = '', limit = 100): Record<string, unknown>[] {
   const search = `%${query.trim()}%`
   return db.prepare(`
     SELECT pe.id, pe.played_at AS playedAt, pe.context_uri AS contextUri,
-      t.name AS trackName, t.spotify_url AS spotifyUrl,
+      t.name AS trackName, t.uri AS spotifyUri, t.spotify_url AS spotifyUrl,
       al.name AS albumName, al.image_url AS imageUrl,
       GROUP_CONCAT(ar.name, ', ') AS artists
     FROM play_events pe
@@ -606,7 +607,8 @@ export function getRankings(
   const filter = periodClause(period)
   if (type === 'artist') {
     return db.prepare(`
-      SELECT ar.id, ar.name, ar.spotify_url AS spotifyUrl, COUNT(*) AS events,
+      SELECT ar.id, ar.name, ar.uri AS spotifyUri,
+        ar.spotify_url AS spotifyUrl, COUNT(*) AS events,
         MAX(pe.played_at) AS lastPlayed
       FROM play_events pe
       JOIN track_artists ta ON ta.track_id = pe.track_id AND ta.position = 0
@@ -617,7 +619,7 @@ export function getRankings(
   }
   if (type === 'album') {
     return db.prepare(`
-      SELECT al.id, al.name, al.spotify_url AS spotifyUrl,
+      SELECT al.id, al.name, al.uri AS spotifyUri, al.spotify_url AS spotifyUrl,
         al.image_url AS imageUrl, COUNT(*) AS events,
         MAX(pe.played_at) AS lastPlayed
       FROM play_events pe
@@ -628,7 +630,7 @@ export function getRankings(
     `).all(...filter.params) as Record<string, unknown>[]
   }
   return db.prepare(`
-    SELECT t.id, t.name, t.spotify_url AS spotifyUrl,
+    SELECT t.id, t.name, t.uri AS spotifyUri, t.spotify_url AS spotifyUrl,
       al.name AS albumName, al.image_url AS imageUrl,
       GROUP_CONCAT(DISTINCT ar.name) AS artists,
       COUNT(*) AS events, MAX(pe.played_at) AS lastPlayed
