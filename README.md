@@ -1,9 +1,15 @@
 # Listening Ledger
 
+[![MIT License](https://img.shields.io/badge/license-MIT-b7ff3c.svg)](LICENSE)
+
 A private, local-first Spotify listening dashboard. Listening Ledger records the
 recent playback events Spotify exposes, keeps them in a local SQLite database,
 and clearly separates those observations from verified 30-second streams that
 can be imported from Spotify's Extended Streaming History later.
+
+> Playback timestamps are evidence that Spotify returned an event. They are not
+> proof that 30 seconds of the track were played. Listening Ledger keeps that
+> distinction visible throughout the product.
 
 ## Current MVP
 
@@ -13,6 +19,20 @@ can be imported from Spotify's Extended Streaming History later.
 - Dashboard, history, rankings, trends, data health, and settings
 - JSON and CSV export
 - Honest observed-versus-verified status throughout the UI
+
+## Technology
+
+- React, TypeScript, and Vite
+- Express API
+- SQLite through Node's built-in `node:sqlite` module
+- Spotify Authorization Code flow with PKCE
+- Vitest and ESLint
+
+## Prerequisites
+
+- Node.js 22.5 or newer
+- A Spotify account
+- A Spotify developer app in Development Mode or Extended Quota Mode
 
 ## Set up Spotify
 
@@ -34,6 +54,9 @@ npm.cmd run dev
 
 Open `http://127.0.0.1:5173`.
 
+Your Spotify token and listening database are written beneath the local
+checkout. They are ignored by Git and should never be committed.
+
 ## Background collection
 
 The synchronization paths are deliberately separate:
@@ -53,10 +76,11 @@ npm.cmd run sync:top
 - Spotify rate-limit responses honour `Retry-After` once before the run is
   recorded as failed.
 
-On this Windows installation, Task Scheduler runs **Listening Ledger - Recent
-Plays** every 15 minutes and **Listening Ledger - Daily Top Items** once daily.
-Both tasks use the repository as their working directory so `.env.local` and
-the local database resolve correctly.
+For reliable background collection, configure your operating system's scheduler
+to run `npm run sync:recent` every 15 minutes and `npm run sync:top` once daily.
+Set the repository root as the working directory so `.env.local` and the local
+database resolve correctly. The web server does not start a second background
+timer, so the scheduler remains the single automatic collection path.
 
 ## Quality checks
 
@@ -73,3 +97,30 @@ but not the actual milliseconds listened. These records are labelled **Observed
 playback events**, not confirmed streams. Imported Spotify history with
 `ms_played >= 30000` can be labelled **Verified streams**.
 
+Recently Played returns at most 50 events per page. Listening Ledger follows
+additional pages when Spotify provides them, but a long collection gap can still
+leave history that the API no longer exposes. Keeping the scheduled collector
+running reduces that risk.
+
+## Privacy
+
+- OAuth credentials and listening data remain local by default.
+- `.env.local`, `.data/`, build output, logs, and dependencies are excluded from
+  version control.
+- Exported JSON and CSV files may contain personal listening history; review them
+  before sharing.
+- The current application is single-user. Adding more people to a Spotify
+  Development Mode allowlist does not isolate their data inside this app.
+
+## Roadmap
+
+- Import Spotify Extended Streaming History
+- Verified stream counts and exact listening time
+- Track and artist detail pages
+- Calendar, sessions, records, and streaks
+- Ranking movement from daily Top Items snapshots
+- Optional playlist generation
+
+## License
+
+[MIT](LICENSE)

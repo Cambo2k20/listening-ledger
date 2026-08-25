@@ -2,6 +2,14 @@
   "name": "listening-ledger",
   "private": true,
   "version": "0.1.0",
+  "description": "A local-first Spotify listening-history dashboard with honest observed-event statistics.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Cambo2k20/listening-ledger.git"
+  },
+  "homepage": "https://github.com/Cambo2k20/listening-ledger#readme",
+  "bugs": "https://github.com/Cambo2k20/listening-ledger/issues",
   "type": "module",
   "scripts": {
     "dev": "concurrently -k -n server,web -c cyan,green \"npm:dev:server\" \"npm:dev:web\"",
