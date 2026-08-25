@@ -14,7 +14,7 @@ import { useAppContext } from '../context'
 import { api } from '../lib/api'
 
 const authMessages: Record<string, string> = {
-  connected: 'Spotify connected. Run a sync to create the first ledger entries.',
+  connected: 'Spotify access updated. Syncing and discovery permissions are ready.',
   denied: 'Spotify authorization was cancelled.',
   invalid: 'Spotify returned an incomplete authorization response.',
   failed: 'Spotify authorization failed. Check the Client ID and redirect URI.',
@@ -47,7 +47,7 @@ export default function SettingsScreen() {
       <PageIntro
         eyebrow="Local configuration"
         title="Connect without over-sharing."
-        description="Listening Ledger requests two read-only scopes and stores authorization tokens only in its local, Git-ignored database."
+        description="Listening Ledger requests four purpose-limited scopes and stores authorization tokens only in its local, Git-ignored database. Playlist access is limited to creating private playlists."
       />
 
       {authState && authMessages[authState] && (
@@ -66,7 +66,7 @@ export default function SettingsScreen() {
                 <strong>Add the Client ID</strong>
                 <p>
                   Copy <code>.env.example</code> to <code>.env.local</code> and
-                  add <code>SPOTIFY_CLIENT_ID</code>.
+                  add <code>SPOTIFY_CLIENT_ID</code> and <code>LASTFM_API_KEY</code>.
                 </p>
               </div>
             </div>
@@ -85,7 +85,7 @@ export default function SettingsScreen() {
               <span>{status?.connected ? <Check size={17} /> : '3'}</span>
               <div>
                 <strong>Authorize your account</strong>
-                <p>Spotify will show the two requested read-only permissions.</p>
+                <p>Spotify will show the four permissions listed alongside this panel.</p>
               </div>
             </div>
           </div>
@@ -96,6 +96,11 @@ export default function SettingsScreen() {
                 <span className="connected-label">
                   <i /> Connected as {status.account?.displayName || 'Spotify user'}
                 </span>
+                {Boolean(status.missingScopes.length) && (
+                  <a className="button button--primary" href="/api/auth/start">
+                    <KeyRound size={16} /> Update access
+                  </a>
+                )}
                 <button className="button button--danger" onClick={() => void disconnect()}>
                   <LogOut size={16} /> Disconnect
                 </button>
@@ -112,7 +117,7 @@ export default function SettingsScreen() {
           </div>
         </Panel>
 
-        <Panel title="Permissions" kicker="Read only">
+        <Panel title="Permissions" kicker="Purpose limited">
           <div className="permission-list">
             <article>
               <span>
@@ -122,6 +127,26 @@ export default function SettingsScreen() {
                 <strong>Recently played</strong>
                 <code>user-read-recently-played</code>
                 <p>Tracks and their playback timestamps. No milliseconds listened.</p>
+              </div>
+            </article>
+            <article>
+              <span>
+                <Shield size={18} />
+              </span>
+              <div>
+                <strong>Liked songs</strong>
+                <code>user-library-read</code>
+                <p>Lets you choose saved tracks as discovery seeds. It cannot change your library.</p>
+              </div>
+            </article>
+            <article>
+              <span>
+                <Shield size={18} />
+              </span>
+              <div>
+                <strong>Private playlists</strong>
+                <code>playlist-modify-private</code>
+                <p>Creates the private playlist you approve after reviewing recommendations.</p>
               </div>
             </article>
             <article>
@@ -174,4 +199,3 @@ export default function SettingsScreen() {
     </>
   )
 }
-

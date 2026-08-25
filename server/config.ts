@@ -9,6 +9,7 @@ if (existsSync(envPath)) {
 export const config = {
   port: Number(process.env.PORT ?? 4317),
   clientId: process.env.SPOTIFY_CLIENT_ID?.trim() ?? '',
+  lastFmApiKey: process.env.LASTFM_API_KEY?.trim() ?? '',
   redirectUri:
     process.env.SPOTIFY_REDIRECT_URI?.trim() ??
     'http://127.0.0.1:4317/auth/callback',
@@ -18,4 +19,3 @@ export const config = {
       ? 'http://127.0.0.1:4317'
       : 'http://127.0.0.1:5173'),
 }
-

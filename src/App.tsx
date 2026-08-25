@@ -5,6 +5,7 @@ import { api } from './lib/api'
 import Shell from './components/Shell'
 import DashboardScreen from './screens/DashboardScreen'
 import DataHealthScreen from './screens/DataHealthScreen'
+import DiscoverScreen from './screens/DiscoverScreen'
 import HistoryScreen from './screens/HistoryScreen'
 import RankingsScreen from './screens/RankingsScreen'
 import SettingsScreen from './screens/SettingsScreen'
@@ -67,6 +68,7 @@ export default function App() {
           <Route path="history" element={<HistoryScreen />} />
           <Route path="rankings" element={<RankingsScreen />} />
           <Route path="trends" element={<TrendsScreen />} />
+          <Route path="discover" element={<DiscoverScreen />} />
           <Route path="health" element={<DataHealthScreen />} />
           <Route path="settings" element={<SettingsScreen />} />
           <Route path="*" element={<Navigate to="/" replace />} />
@@ -75,4 +77,3 @@ export default function App() {
     </AppContext.Provider>
   )
 }
-

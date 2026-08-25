@@ -14,9 +14,13 @@ can be imported from Spotify's Extended Streaming History later.
 ## Current MVP
 
 - Spotify OAuth using Authorization Code with PKCE
-- Minimum read-only scopes: `user-read-recently-played` and `user-top-read`
+- Purpose-limited Spotify scopes for history, top items, liked-song seeds, and
+  creating private playlists
 - Local SQLite persistence and playback-event deduplication
-- Dashboard, history, rankings, trends, data health, and settings
+- Dashboard, history, rankings, trends, explainable music discovery, data
+  health, and settings
+- Last.fm similar-track discovery matched back to playable Spotify tracks
+- Local Love, Reject, and Already Know feedback with review before playlist save
 - JSON and CSV export
 - Honest observed-versus-verified status throughout the UI
 
@@ -33,6 +37,7 @@ can be imported from Spotify's Extended Streaming History later.
 - Node.js 22.5 or newer
 - A Spotify account
 - A Spotify developer app in Development Mode or Extended Quota Mode
+- A free Last.fm API key
 
 ## Set up Spotify
 
@@ -41,9 +46,32 @@ can be imported from Spotify's Extended Streaming History later.
    `http://127.0.0.1:4317/auth/callback`
 3. Copy `.env.example` to `.env.local`.
 4. Paste the app's Client ID into `SPOTIFY_CLIENT_ID`.
+5. Paste the Last.fm API key into `LASTFM_API_KEY`.
 
 No client secret is required or stored. PKCE keeps the app local and avoids
 placing a secret in browser code.
+
+On the next authorization, Spotify requests:
+
+- `user-read-recently-played`
+- `user-top-read`
+- `user-library-read`
+- `playlist-modify-private`
+
+The final scope only creates or updates private playlists after explicit review;
+it does not grant public-playlist access.
+
+## Discovery Builder
+
+Choose up to five tracks from the local ledger, Spotify Top Items, Liked Songs,
+or Spotify search. Safe, Balanced, and Wild modes adjust how strongly the result
+set favours unfamiliar artists. Exact tracks already in the ledger, rejected
+tracks, and common live/remaster variants are removed before ranking. No more
+than two recommendations from one artist are returned.
+
+Generation runs only when requested. Last.fm supplies similarity data and is
+credited in the interface; Spotify search supplies playable matches. Spotify
+content is not used to train a model.
 
 ## Run locally
 
@@ -119,7 +147,7 @@ running reduces that risk.
 - Track and artist detail pages
 - Calendar, sessions, records, and streaks
 - Ranking movement from daily Top Items snapshots
-- Optional playlist generation
+- Discovery-session history and richer feedback analytics
 
 ## License
 

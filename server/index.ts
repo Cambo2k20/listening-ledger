@@ -14,11 +14,27 @@ import {
   getTrends,
 } from './db.ts'
 import {
+  generateDiscoverySession,
+  getDiscoverySeeds,
+  getDiscoveryStatus,
+  saveDiscoveryPlaylist,
+  updateDiscoveryFeedback,
+} from './discovery.ts'
+import {
   completeAuthorization,
   createAuthorizationUrl,
+  getGrantedSpotifyScopes,
+  getMissingSpotifyScopes,
+  SPOTIFY_SCOPES,
   SpotifyAuthorizationError,
   syncRecentPlayback,
 } from './spotify.ts'
+import type {
+  DiscoveryFeedbackStatus,
+  DiscoveryMode,
+  DiscoverySeed,
+  DiscoverySeedSource,
+} from './types.ts'
 
 const app = express()
 app.disable('x-powered-by')
@@ -30,7 +46,10 @@ app.get('/api/status', (_request, response) => {
     connected: Boolean(getStoredToken()),
     account: getAccount(),
     redirectUri: config.redirectUri,
-    scopes: ['user-read-recently-played', 'user-top-read'],
+    scopes: SPOTIFY_SCOPES,
+    grantedScopes: getGrantedSpotifyScopes(),
+    missingScopes: getMissingSpotifyScopes(),
+    lastFmConfigured: Boolean(config.lastFmApiKey),
   })
 })
 
@@ -65,6 +84,97 @@ app.get('/api/trends', (_request, response) => {
 
 app.get('/api/health', (_request, response) => {
   response.json(getHealth())
+})
+
+function externalErrorStatus(error: unknown): number {
+  if (error instanceof SpotifyAuthorizationError) {
+    return error.message.includes('must be updated') ? 403 : 401
+  }
+  return 502
+}
+
+app.get('/api/discovery/status', (_request, response) => {
+  response.json(getDiscoveryStatus())
+})
+
+app.get('/api/discovery/seeds', async (request, response) => {
+  try {
+    const source = String(request.query.source ?? 'ledger')
+    if (!['ledger', 'top', 'liked', 'search'].includes(source)) {
+      response.status(400).json({ error: 'Unknown seed source.' })
+      return
+    }
+    response.json({
+      items: await getDiscoverySeeds(
+        source as DiscoverySeedSource,
+        String(request.query.q ?? ''),
+      ),
+    })
+  } catch (error) {
+    response.status(externalErrorStatus(error)).json({
+      error: error instanceof Error ? error.message : 'Seed lookup failed.',
+    })
+  }
+})
+
+app.post('/api/discovery/generate', async (request, response) => {
+  try {
+    const body = request.body as {
+      seeds?: DiscoverySeed[]
+      mode?: DiscoveryMode
+      targetCount?: number
+    }
+    response.status(201).json(
+      await generateDiscoverySession({
+        seeds: Array.isArray(body.seeds) ? body.seeds : [],
+        mode: body.mode ?? 'balanced',
+        targetCount: body.targetCount,
+      }),
+    )
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Discovery failed.'
+    const status =
+      message.includes('Select at least') || message.includes('mode must')
+        ? 400
+        : externalErrorStatus(error)
+    response.status(status).json({ error: message })
+  }
+})
+
+app.patch('/api/discovery/candidates/:id', (request, response) => {
+  try {
+    const candidateId = Number(request.params.id)
+    if (!Number.isInteger(candidateId) || candidateId < 1) {
+      response.status(400).json({ error: 'Invalid discovery candidate id.' })
+      return
+    }
+    const status = String(request.body?.status ?? '') as DiscoveryFeedbackStatus
+    response.json(updateDiscoveryFeedback(candidateId, status))
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Feedback failed.'
+    response.status(message.includes('not found') ? 404 : 400).json({ error: message })
+  }
+})
+
+app.post('/api/discovery/sessions/:id/playlist', async (request, response) => {
+  try {
+    const sessionId = Number(request.params.id)
+    if (!Number.isInteger(sessionId) || sessionId < 1) {
+      response.status(400).json({ error: 'Invalid discovery session id.' })
+      return
+    }
+    response.json(
+      await saveDiscoveryPlaylist(sessionId, String(request.body?.name ?? '')),
+    )
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Playlist save failed.'
+    const status = message.includes('not found')
+      ? 404
+      : message.includes('at least one')
+        ? 400
+        : externalErrorStatus(error)
+    response.status(status).json({ error: message })
+  }
 })
 
 app.post('/api/sync', async (_request, response) => {
